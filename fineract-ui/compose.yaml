@@ -1,0 +1,15 @@
+services:
+  fineract-ui:
+    image: taalamke/taalam-fincore-web:latest
+    container_name: fineract-web
+    restart: unless-stopped
+    expose:
+      - "3000"
+    env_file:
+      - .env
+    networks:
+      - fincore
+
+networks:
+  fincore:
+    external: true

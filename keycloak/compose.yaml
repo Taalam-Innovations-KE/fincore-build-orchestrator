@@ -1,0 +1,26 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: fincore-kc
+    restart: unless-stopped
+
+    command: ["start"]
+
+    env_file:
+      - ./.env
+
+    expose:
+      - "8080"
+
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+  
+    networks:
+      - fincore
+
+volumes:
+  keycloak_data:
+
+networks:
+  fincore:
+    external: true

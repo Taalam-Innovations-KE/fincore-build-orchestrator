@@ -1,0 +1,26 @@
+http:
+  routers:
+    fincore-kc:
+      rule: Host(`auth.fincore.taalaminnovations.co.ke`)
+      entryPoints: [websecure]
+      tls:
+        certResolver: le
+      service: fincore-kc-svc
+
+    fincore-ui:
+      rule: Host(`demo.fincore.taalaminnovations.co.ke`)
+      entryPoints: [websecure]
+      tls:
+        certResolver: le
+      service: fincore-ui-svc
+
+  services:
+    fincore-kc-svc:
+      loadBalancer:
+        servers:
+          - url: "http://fincore-kc:8080"
+
+    fincore-ui-svc:
+      loadBalancer:
+        servers:
+          - url: "http://fineract-web:3000"

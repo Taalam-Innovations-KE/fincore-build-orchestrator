@@ -1,0 +1,41 @@
+services:
+  fineract:
+    image: apache/fineract:latest
+    container_name: fineract
+
+    restart: unless-stopped
+
+    ports:
+      - "8443:8443"
+
+    env_file:
+      - .env
+
+    volumes:
+      # Logback override
+      - ./config/docker/logback/logback-override.xml:/app/logback-override.xml
+
+      # AWS credentials (if used)
+      - ./config/docker/aws/etc/credentials:/etc/aws/credentials:ro
+
+      # Application logs
+      - ./logs:/var/logs/fineract:rw
+
+    networks:
+      - fincore
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "sh",
+          "-c",
+          "echo 'Checking Fineract...'; while ! nc -z localhost 8443; do sleep 1; done"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+
+networks:
+  fincore:
+    external: true
