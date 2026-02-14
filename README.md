@@ -5,7 +5,7 @@ Build orchestration for distributed source repos:
 - `Taalam-Innovations-KE/fineract`
 - `Taalam-Innovations-KE/taalam-fincore-reporting-plugin`
 
-The workflow in this repo builds Fineract from source, builds the reporting plugin from source, embeds plugin jars and Pentaho report templates into a final Docker image, and optionally pushes the image to GHCR.
+The workflow in this repo builds Fineract from source, builds the reporting plugin from source, embeds plugin jars and Pentaho report templates into a final Docker image, and optionally pushes the image to Docker Hub (or GHCR).
 
 ## Workflow in this repo
 
@@ -28,7 +28,9 @@ The workflow builds two image variants in parallel:
 In `Taalam-Innovations-KE/fincore-build-orchestrator`:
 
 - `CROSS_REPO_TOKEN` (recommended): PAT/fine-grained token with read access to both source repos.
-- `GHCR_TOKEN` (optional): token with `packages:write` if `GITHUB_TOKEN` is not enough for your org package policy.
+- `DOCKERHUB_USERNAME` (required for Docker Hub pushes): your Docker Hub username.
+- `DOCKERHUB_TOKEN` (required for Docker Hub pushes): Docker Hub access token.
+- `GHCR_TOKEN` (optional, GHCR only): token with `packages:write` if `GITHUB_TOKEN` is not enough for your org package policy.
 
 ## Manual build run
 
@@ -38,7 +40,7 @@ In `Taalam-Innovations-KE/fincore-build-orchestrator`:
 4. Provide:
    - `fineract_ref` (for example `develop`)
    - `plugin_ref` (for example `develop`)
-   - `image_repository` (for example `ghcr.io/taalam-innovations-ke/fineract-reports`)
+   - `image_repository` (for example `taalamke/fineract-reports`)
    - `push_image` (`true` or `false`)
    - `force_rebuild` (`true` or `false`)
 
