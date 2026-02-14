@@ -1,0 +1,247 @@
+name: Build Fineract With Reporting Plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      fineract_ref:
+        description: "Branch, tag, or SHA for Taalam-Innovations-KE/fineract"
+        required: true
+        default: "develop"
+      plugin_ref:
+        description: "Branch, tag, or SHA for Taalam-Innovations-KE/taalam-fincore-reporting-plugin"
+        required: true
+        default: "develop"
+      image_repository:
+        description: "Target image repository (for example ghcr.io/taalam-innovations-ke/fineract-reports)"
+        required: true
+        default: "ghcr.io/taalam-innovations-ke/fineract-reports"
+      push_image:
+        description: "Push built images to registry"
+        required: true
+        default: true
+        type: boolean
+      force_rebuild:
+        description: "Force build even when the image tag already exists"
+        required: true
+        default: false
+        type: boolean
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        reports_db:
+          - Postgresql
+          - MariaDB
+
+    steps:
+      - name: Resolve build parameters
+        id: params
+        env:
+          INPUT_FINERACT_REF: ${{ inputs.fineract_ref }}
+          INPUT_PLUGIN_REF: ${{ inputs.plugin_ref }}
+          INPUT_IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+          INPUT_PUSH_IMAGE: ${{ inputs.push_image }}
+          INPUT_FORCE_REBUILD: ${{ inputs.force_rebuild }}
+        run: |
+          set -euo pipefail
+
+          fineract_ref="${INPUT_FINERACT_REF:-develop}"
+          plugin_ref="${INPUT_PLUGIN_REF:-develop}"
+          image_repository="${INPUT_IMAGE_REPOSITORY:-ghcr.io/taalam-innovations-ke/fineract-reports}"
+          push_image="${INPUT_PUSH_IMAGE:-true}"
+          force_rebuild="${INPUT_FORCE_REBUILD:-false}"
+
+          image_repository="$(echo "${image_repository}" | tr '[:upper:]' '[:lower:]')"
+          push_image="$(echo "${push_image}" | tr '[:upper:]' '[:lower:]')"
+          force_rebuild="$(echo "${force_rebuild}" | tr '[:upper:]' '[:lower:]')"
+
+          if [ "${push_image}" != "true" ] && [ "${push_image}" != "false" ]; then
+            echo "Invalid push_image value: ${push_image}" >&2
+            exit 1
+          fi
+          if [ "${force_rebuild}" != "true" ] && [ "${force_rebuild}" != "false" ]; then
+            echo "Invalid force_rebuild value: ${force_rebuild}" >&2
+            exit 1
+          fi
+
+          echo "fineract_ref=${fineract_ref}" >> "${GITHUB_OUTPUT}"
+          echo "plugin_ref=${plugin_ref}" >> "${GITHUB_OUTPUT}"
+          echo "image_repository=${image_repository}" >> "${GITHUB_OUTPUT}"
+          echo "push_image=${push_image}" >> "${GITHUB_OUTPUT}"
+          echo "force_rebuild=${force_rebuild}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout orchestrator repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Fineract source
+        uses: actions/checkout@v4
+        with:
+          repository: Taalam-Innovations-KE/fineract
+          ref: ${{ steps.params.outputs.fineract_ref }}
+          path: fineract-src
+          token: ${{ secrets.CROSS_REPO_TOKEN != '' && secrets.CROSS_REPO_TOKEN || github.token }}
+
+      - name: Checkout reporting plugin source
+        uses: actions/checkout@v4
+        with:
+          repository: Taalam-Innovations-KE/taalam-fincore-reporting-plugin
+          ref: ${{ steps.params.outputs.plugin_ref }}
+          path: plugin-src
+          token: ${{ secrets.CROSS_REPO_TOKEN != '' && secrets.CROSS_REPO_TOKEN || github.token }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          set -euo pipefail
+
+          fineract_sha="$(git -C fineract-src rev-parse --short=12 HEAD)"
+          plugin_sha="$(git -C plugin-src rev-parse --short=12 HEAD)"
+          reports_db="$(echo "${{ matrix.reports_db }}" | tr '[:upper:]' '[:lower:]')"
+
+          tag="${fineract_sha}-${plugin_sha}-${reports_db}"
+          local_image="fineract-with-reporting:${tag}"
+          remote_image="${{ steps.params.outputs.image_repository }}:${tag}"
+          base_image="fineract-base:${fineract_sha}"
+
+          echo "fineract_sha=${fineract_sha}" >> "${GITHUB_OUTPUT}"
+          echo "plugin_sha=${plugin_sha}" >> "${GITHUB_OUTPUT}"
+          echo "reports_db=${reports_db}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "base_image=${base_image}" >> "${GITHUB_OUTPUT}"
+          echo "local_image=${local_image}" >> "${GITHUB_OUTPUT}"
+          echo "remote_image=${remote_image}" >> "${GITHUB_OUTPUT}"
+
+      - name: Login to GHCR
+        if: steps.params.outputs.push_image == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN != '' && secrets.GHCR_TOKEN || github.token }}
+
+      - name: Check if target image already exists
+        id: remote
+        if: steps.params.outputs.push_image == 'true' && steps.params.outputs.force_rebuild != 'true'
+        run: |
+          set -euo pipefail
+          if docker manifest inspect "${{ steps.tags.outputs.remote_image }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Set up JDK 21
+        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Set up Gradle cache
+        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Fineract base image from source
+        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
+        working-directory: fineract-src
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --console=plain :fineract-provider:jibDockerBuild \
+            -Djib.to.image=${{ steps.tags.outputs.base_image }} \
+            -x test -x cucumber
+
+      - name: Build reporting plugin and dependencies
+        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
+        working-directory: plugin-src
+        run: |
+          set -euo pipefail
+          mvn -B -ntp clean package dependency:copy-dependencies \
+            -DskipTests \
+            -DincludeScope=runtime \
+            -DoutputDirectory=target/dependency
+
+      - name: Assemble Docker context with plugin and reports
+        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
+        id: context
+        run: |
+          set -euo pipefail
+          context_dir="${RUNNER_TEMP}/fineract-reporting-context-${{ steps.tags.outputs.reports_db }}"
+          mkdir -p "${context_dir}/plugin-libs" "${context_dir}/pentahoReports"
+
+          plugin_jar="$(find plugin-src/target -maxdepth 1 -type f -name 'pentaho-plugin-*.jar' ! -name '*sources*' ! -name '*javadoc*' | head -n 1)"
+          if [ -z "${plugin_jar}" ]; then
+            echo "Plugin jar not found under plugin-src/target" >&2
+            exit 1
+          fi
+
+          cp "${plugin_jar}" "${context_dir}/plugin-libs/"
+          if compgen -G "plugin-src/target/dependency/*.jar" > /dev/null; then
+            cp plugin-src/target/dependency/*.jar "${context_dir}/plugin-libs/"
+          fi
+
+          cp -R "plugin-src/pentahoReports/${{ matrix.reports_db }}/." "${context_dir}/pentahoReports/"
+          cp docker/fineract-with-reporting-plugin.Dockerfile "${context_dir}/Dockerfile"
+
+          echo "context_dir=${context_dir}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build final Fineract image with reporting plugin embedded
+        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg BASE_IMAGE=${{ steps.tags.outputs.base_image }} \
+            -t ${{ steps.tags.outputs.local_image }} \
+            -f ${{ steps.context.outputs.context_dir }}/Dockerfile \
+            ${{ steps.context.outputs.context_dir }}
+
+      - name: Validate embedded plugin and report path
+        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh ${{ steps.tags.outputs.local_image }} -c '
+            set -e
+            ls -1 /app/plugins/*.jar >/dev/null
+            test -d /app/pentahoReports
+            test -n "$(ls -A /app/pentahoReports)"
+            test "$FINERACT_PENTAHO_REPORTS_PATH" = "/app/pentahoReports"
+          '
+
+      - name: Push image
+        if: steps.params.outputs.push_image == 'true' && (steps.params.outputs.force_rebuild == 'true' || steps.remote.outputs.exists != 'true')
+        run: |
+          set -euo pipefail
+          docker tag ${{ steps.tags.outputs.local_image }} ${{ steps.tags.outputs.remote_image }}
+          docker push ${{ steps.tags.outputs.remote_image }}
+
+      - name: Build summary
+        run: |
+          {
+            echo "### Fineract Reporting Image Build"
+            echo ""
+            echo "- Trigger: \`${GITHUB_EVENT_NAME}\`"
+            echo "- Reports DB variant: \`${{ matrix.reports_db }}\`"
+            echo "- Fineract ref: \`${{ steps.params.outputs.fineract_ref }}\`"
+            echo "- Fineract SHA: \`${{ steps.tags.outputs.fineract_sha }}\`"
+            echo "- Plugin ref: \`${{ steps.params.outputs.plugin_ref }}\`"
+            echo "- Plugin SHA: \`${{ steps.tags.outputs.plugin_sha }}\`"
+            echo "- Force rebuild: \`${{ steps.params.outputs.force_rebuild }}\`"
+            if [ "${{ steps.params.outputs.push_image }}" = "true" ]; then
+              if [ "${{ steps.params.outputs.force_rebuild }}" = "true" ] || [ "${{ steps.remote.outputs.exists }}" != "true" ]; then
+                echo "- Published image: \`${{ steps.tags.outputs.remote_image }}\`"
+              else
+                echo "- Published image: skipped (already exists)"
+              fi
+            else
+              echo "- Published image: skipped (push_image=false)"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
