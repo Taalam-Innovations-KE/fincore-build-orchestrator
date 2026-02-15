@@ -1,6 +1,6 @@
 services:
   fineract:
-    image: ${FINERACT_IMAGE:-apache/fineract:latest}
+    image: ${FINERACT_IMAGE:-taalamke/taalam-fineract:latest}
     container_name: fineract
     user: ${FINERACT_CONTAINER_USER:-0:0}
 

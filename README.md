@@ -43,7 +43,6 @@ In `Taalam-Innovations-KE/fincore-build-orchestrator`:
    - `plugin_ref` (for example `develop`)
    - `image_repository` (for example `taalamke/taalam-fineract`)
    - `push_image` (`true` or `false`)
-   - `force_rebuild` (`true` or `false`)
 
 ## Rebuild behavior
 
@@ -51,8 +50,11 @@ The orchestrator computes a deterministic image tag:
 
 `<fineract_sha>-<plugin_sha>`
 
-If `push_image=true` and that tag already exists in the registry, the run skips build/push.  
-If you need a rebuild of an existing tag, run manually with `force_rebuild=true`.
+Each run always builds fresh images from the selected refs.
+If `push_image=true`, the built image is pushed with both tags:
+
+- `<fineract_sha>-<plugin_sha>`
+- `latest`
 
 ## Runtime embedding layout
 
@@ -71,7 +73,8 @@ The image is built with `docker/fineract-with-reporting-plugin.Dockerfile` and e
 - `FINERACT_REPORTS_DB_TYPE=mariadb` -> `/app/pentahoReports/mariadb`
 
 Set this in your env file (for example `fineract/.env`) and start compose normally.  
-You can also override the image in the same env file using `FINERACT_IMAGE=<repo:tag>`.
+By default, `fineract/compose.yaml` uses `taalamke/taalam-fineract:latest`.
+You can override the image in the same env file using `FINERACT_IMAGE=<repo:tag>`.
 
 ### Runtime user
 

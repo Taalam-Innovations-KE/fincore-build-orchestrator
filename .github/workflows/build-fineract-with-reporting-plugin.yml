@@ -20,11 +20,6 @@ on:
         required: true
         default: true
         type: boolean
-      force_rebuild:
-        description: "Force build even when the image tag already exists"
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -42,7 +37,6 @@ jobs:
           INPUT_PLUGIN_REF: ${{ inputs.plugin_ref }}
           INPUT_IMAGE_REPOSITORY: ${{ inputs.image_repository }}
           INPUT_PUSH_IMAGE: ${{ inputs.push_image }}
-          INPUT_FORCE_REBUILD: ${{ inputs.force_rebuild }}
         run: |
           set -euo pipefail
 
@@ -50,18 +44,12 @@ jobs:
           plugin_ref="${INPUT_PLUGIN_REF:-develop}"
           image_repository="${INPUT_IMAGE_REPOSITORY:-taalamke/taalam-fineract}"
           push_image="${INPUT_PUSH_IMAGE:-true}"
-          force_rebuild="${INPUT_FORCE_REBUILD:-false}"
 
           image_repository="$(echo "${image_repository}" | tr '[:upper:]' '[:lower:]')"
           push_image="$(echo "${push_image}" | tr '[:upper:]' '[:lower:]')"
-          force_rebuild="$(echo "${force_rebuild}" | tr '[:upper:]' '[:lower:]')"
 
           if [ "${push_image}" != "true" ] && [ "${push_image}" != "false" ]; then
             echo "Invalid push_image value: ${push_image}" >&2
-            exit 1
-          fi
-          if [ "${force_rebuild}" != "true" ] && [ "${force_rebuild}" != "false" ]; then
-            echo "Invalid force_rebuild value: ${force_rebuild}" >&2
             exit 1
           fi
 
@@ -83,7 +71,6 @@ jobs:
           echo "plugin_ref=${plugin_ref}" >> "${GITHUB_OUTPUT}"
           echo "image_repository=${image_repository}" >> "${GITHUB_OUTPUT}"
           echo "push_image=${push_image}" >> "${GITHUB_OUTPUT}"
-          echo "force_rebuild=${force_rebuild}" >> "${GITHUB_OUTPUT}"
           echo "registry=${registry}" >> "${GITHUB_OUTPUT}"
 
       - name: Checkout orchestrator repository
@@ -144,19 +131,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_TOKEN }}
 
-      - name: Check if target image already exists
-        id: remote
-        if: steps.params.outputs.push_image == 'true' && steps.params.outputs.force_rebuild != 'true'
-        run: |
-          set -euo pipefail
-          if docker manifest inspect "${{ steps.tags.outputs.remote_image }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "exists=false" >> "${GITHUB_OUTPUT}"
-          fi
-
       - name: Set up JDK 21
-        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -164,11 +139,9 @@ jobs:
           cache: maven
 
       - name: Set up Gradle cache
-        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build Fineract base image from source
-        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
         working-directory: fineract-src
         run: |
           set -euo pipefail
@@ -177,7 +150,6 @@ jobs:
             -x test -x cucumber
 
       - name: Build reporting plugin and dependencies
-        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
         working-directory: plugin-src
         run: |
           set -euo pipefail
@@ -188,7 +160,6 @@ jobs:
             -DoutputDirectory=target/dependency
 
       - name: Assemble Docker context with plugin and reports
-        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
         id: context
         run: |
           set -euo pipefail
@@ -248,7 +219,6 @@ jobs:
           echo "context_dir=${context_dir}" >> "${GITHUB_OUTPUT}"
 
       - name: Build final Fineract image with reporting plugin embedded
-        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
         run: |
           set -euo pipefail
           docker build \
@@ -258,7 +228,6 @@ jobs:
             ${{ steps.context.outputs.context_dir }}
 
       - name: Validate embedded plugin and report path
-        if: steps.params.outputs.force_rebuild == 'true' || steps.params.outputs.push_image != 'true' || steps.remote.outputs.exists != 'true'
         run: |
           set -euo pipefail
           docker run --rm --entrypoint sh ${{ steps.tags.outputs.local_image }} -c '
@@ -278,7 +247,7 @@ jobs:
           '
 
       - name: Push image
-        if: steps.params.outputs.push_image == 'true' && (steps.params.outputs.force_rebuild == 'true' || steps.remote.outputs.exists != 'true')
+        if: steps.params.outputs.push_image == 'true'
         run: |
           set -euo pipefail
           docker tag ${{ steps.tags.outputs.local_image }} ${{ steps.tags.outputs.remote_image }}
@@ -301,14 +270,9 @@ jobs:
             echo "- Default report path: \`/app/pentahoReports/Postgresql\`"
             echo "- MariaDB override: \`FINERACT_PENTAHO_REPORTS_PATH=/app/pentahoReports/MariaDB\`"
             echo "- Registry: \`${{ steps.params.outputs.registry }}\`"
-            echo "- Force rebuild: \`${{ steps.params.outputs.force_rebuild }}\`"
             if [ "${{ steps.params.outputs.push_image }}" = "true" ]; then
-              if [ "${{ steps.params.outputs.force_rebuild }}" = "true" ] || [ "${{ steps.remote.outputs.exists }}" != "true" ]; then
-                echo "- Published image: \`${{ steps.tags.outputs.remote_image }}\`"
-                echo "- Published image alias: \`${{ steps.tags.outputs.remote_image_latest }}\`"
-              else
-                echo "- Published image: skipped (already exists)"
-              fi
+              echo "- Published image: \`${{ steps.tags.outputs.remote_image }}\`"
+              echo "- Published image alias: \`${{ steps.tags.outputs.remote_image_latest }}\`"
             else
               echo "- Published image: skipped (push_image=false)"
             fi
