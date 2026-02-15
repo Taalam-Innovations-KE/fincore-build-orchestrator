@@ -2,6 +2,7 @@ services:
   fineract:
     image: ${FINERACT_IMAGE:-apache/fineract:latest}
     container_name: fineract
+    user: ${FINERACT_CONTAINER_USER:-0:0}
 
     restart: unless-stopped
 

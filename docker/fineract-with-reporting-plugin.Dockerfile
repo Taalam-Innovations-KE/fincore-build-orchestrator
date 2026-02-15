@@ -15,4 +15,4 @@ RUN ln -s /app/pentahoReports/Postgresql /app/pentahoReports/postgresql \
 
 ENV FINERACT_PENTAHO_REPORTS_PATH=/app/pentahoReports/Postgresql
 
-USER nobody:nogroup
+USER root
