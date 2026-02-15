@@ -118,6 +118,7 @@ jobs:
           tag="${fineract_sha}-${plugin_sha}"
           local_image="fineract-with-reporting:${tag}"
           remote_image="${{ steps.params.outputs.image_repository }}:${tag}"
+          remote_image_latest="${{ steps.params.outputs.image_repository }}:latest"
           base_image="fineract-base:${fineract_sha}"
 
           echo "fineract_sha=${fineract_sha}" >> "${GITHUB_OUTPUT}"
@@ -126,6 +127,7 @@ jobs:
           echo "base_image=${base_image}" >> "${GITHUB_OUTPUT}"
           echo "local_image=${local_image}" >> "${GITHUB_OUTPUT}"
           echo "remote_image=${remote_image}" >> "${GITHUB_OUTPUT}"
+          echo "remote_image_latest=${remote_image_latest}" >> "${GITHUB_OUTPUT}"
 
       - name: Login to Docker Hub
         if: steps.params.outputs.push_image == 'true' && steps.params.outputs.registry == 'docker.io'
@@ -280,7 +282,9 @@ jobs:
         run: |
           set -euo pipefail
           docker tag ${{ steps.tags.outputs.local_image }} ${{ steps.tags.outputs.remote_image }}
+          docker tag ${{ steps.tags.outputs.local_image }} ${{ steps.tags.outputs.remote_image_latest }}
           docker push ${{ steps.tags.outputs.remote_image }}
+          docker push ${{ steps.tags.outputs.remote_image_latest }}
 
       - name: Build summary
         run: |
@@ -301,6 +305,7 @@ jobs:
             if [ "${{ steps.params.outputs.push_image }}" = "true" ]; then
               if [ "${{ steps.params.outputs.force_rebuild }}" = "true" ] || [ "${{ steps.remote.outputs.exists }}" != "true" ]; then
                 echo "- Published image: \`${{ steps.tags.outputs.remote_image }}\`"
+                echo "- Published image alias: \`${{ steps.tags.outputs.remote_image_latest }}\`"
               else
                 echo "- Published image: skipped (already exists)"
               fi

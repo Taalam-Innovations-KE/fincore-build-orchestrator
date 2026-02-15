@@ -18,9 +18,11 @@ The workflow in this repo builds Fineract from source, builds the reporting plug
 ### Image and tag behavior
 
 The workflow builds one image per run.  
-The image tag is deterministic:
+The primary image tag is deterministic:
 
 `<fineract_sha>-<plugin_sha>`
+
+When `push_image=true`, the same built image is also pushed as `latest`.
 
 ## Required secrets
 
