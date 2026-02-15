@@ -192,6 +192,20 @@ jobs:
           set -euo pipefail
           context_dir="${RUNNER_TEMP}/fineract-reporting-context-${{ steps.tags.outputs.tag }}"
           mkdir -p "${context_dir}/plugin-libs" "${context_dir}/pentahoReports/Postgresql" "${context_dir}/pentahoReports/MariaDB"
+          base_artifacts_file="${context_dir}/base-artifacts.txt"
+
+          docker run --rm --entrypoint sh ${{ steps.tags.outputs.base_image }} -c '
+            if [ -d /app/libs ]; then
+              ls -1 /app/libs/*.jar 2>/dev/null || true
+            fi
+          ' | xargs -r -n1 basename \
+            | sed -E 's/\.jar$//; s/-[0-9].*$//' \
+            | sort -u > "${base_artifacts_file}"
+
+          if [ ! -s "${base_artifacts_file}" ]; then
+            echo "Failed to detect base image runtime libraries under /app/libs." >&2
+            exit 1
+          fi
 
           plugin_jar="$(find plugin-src/target -maxdepth 1 -type f -name 'pentaho-plugin-*.jar' ! -name '*sources*' ! -name '*javadoc*' | head -n 1)"
           if [ -z "${plugin_jar}" ]; then
@@ -201,11 +215,26 @@ jobs:
 
           cp "${plugin_jar}" "${context_dir}/plugin-libs/"
           if compgen -G "plugin-src/target/dependency/*.jar" > /dev/null; then
-            find plugin-src/target/dependency -maxdepth 1 -type f -name '*.jar' ! -name 'fineract-*.jar' -exec cp {} "${context_dir}/plugin-libs/" \;
+            while IFS= read -r dep; do
+              dep_name="$(basename "${dep}")"
+              dep_artifact="$(echo "${dep_name}" | sed -E 's/\.jar$//; s/-[0-9].*$//')"
+
+              if grep -Fxq "${dep_artifact}" "${base_artifacts_file}"; then
+                continue
+              fi
+
+              if [[ "${dep_name}" == fineract-*.jar || "${dep_name}" == commons-lang3-*.jar || "${dep_name}" == *spring*.jar ]]; then
+                continue
+              fi
+
+              cp "${dep}" "${context_dir}/plugin-libs/"
+            done < <(find plugin-src/target/dependency -maxdepth 1 -type f -name '*.jar' | sort)
           fi
 
-          if compgen -G "${context_dir}/plugin-libs/fineract-*.jar" > /dev/null; then
-            echo "Found disallowed core Fineract jars in plugin-libs context." >&2
+          if compgen -G "${context_dir}/plugin-libs/fineract-*.jar" > /dev/null \
+            || compgen -G "${context_dir}/plugin-libs/commons-lang3-*.jar" > /dev/null \
+            || compgen -G "${context_dir}/plugin-libs/*spring*.jar" > /dev/null; then
+            echo "Found disallowed framework jars in plugin-libs context." >&2
             ls -1 "${context_dir}/plugin-libs" >&2
             exit 1
           fi
@@ -233,8 +262,10 @@ jobs:
           docker run --rm --entrypoint sh ${{ steps.tags.outputs.local_image }} -c '
             set -e
             ls -1 /app/plugins/*.jar >/dev/null
-            if ls -1 /app/plugins/fineract-*.jar >/dev/null 2>&1; then
-              echo "Core Fineract jars detected under /app/plugins; this will break Liquibase startup."
+            if ls -1 /app/plugins/fineract-*.jar >/dev/null 2>&1 \
+              || ls -1 /app/plugins/commons-lang3-*.jar >/dev/null 2>&1 \
+              || ls -1 /app/plugins/*spring*.jar >/dev/null 2>&1; then
+              echo "Disallowed framework jars detected under /app/plugins; this will cause classpath conflicts."
               exit 1
             fi
             test -d /app/pentahoReports/Postgresql
