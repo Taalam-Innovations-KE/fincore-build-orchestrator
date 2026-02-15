@@ -33,12 +33,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        reports_db:
-          - Postgresql
-          - MariaDB
 
     steps:
       - name: Resolve build parameters
@@ -120,16 +114,14 @@ jobs:
 
           fineract_sha="$(git -C fineract-src rev-parse --short=12 HEAD)"
           plugin_sha="$(git -C plugin-src rev-parse --short=12 HEAD)"
-          reports_db="$(echo "${{ matrix.reports_db }}" | tr '[:upper:]' '[:lower:]')"
 
-          tag="${fineract_sha}-${plugin_sha}-${reports_db}"
+          tag="${fineract_sha}-${plugin_sha}"
           local_image="fineract-with-reporting:${tag}"
           remote_image="${{ steps.params.outputs.image_repository }}:${tag}"
           base_image="fineract-base:${fineract_sha}"
 
           echo "fineract_sha=${fineract_sha}" >> "${GITHUB_OUTPUT}"
           echo "plugin_sha=${plugin_sha}" >> "${GITHUB_OUTPUT}"
-          echo "reports_db=${reports_db}" >> "${GITHUB_OUTPUT}"
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "base_image=${base_image}" >> "${GITHUB_OUTPUT}"
           echo "local_image=${local_image}" >> "${GITHUB_OUTPUT}"
@@ -190,6 +182,7 @@ jobs:
           mvn -B -ntp clean package dependency:copy-dependencies \
             -DskipTests \
             -DincludeScope=runtime \
+            -DexcludeGroupIds=org.apache.fineract \
             -DoutputDirectory=target/dependency
 
       - name: Assemble Docker context with plugin and reports
@@ -197,8 +190,8 @@ jobs:
         id: context
         run: |
           set -euo pipefail
-          context_dir="${RUNNER_TEMP}/fineract-reporting-context-${{ steps.tags.outputs.reports_db }}"
-          mkdir -p "${context_dir}/plugin-libs" "${context_dir}/pentahoReports"
+          context_dir="${RUNNER_TEMP}/fineract-reporting-context-${{ steps.tags.outputs.tag }}"
+          mkdir -p "${context_dir}/plugin-libs" "${context_dir}/pentahoReports/Postgresql" "${context_dir}/pentahoReports/MariaDB"
 
           plugin_jar="$(find plugin-src/target -maxdepth 1 -type f -name 'pentaho-plugin-*.jar' ! -name '*sources*' ! -name '*javadoc*' | head -n 1)"
           if [ -z "${plugin_jar}" ]; then
@@ -208,10 +201,17 @@ jobs:
 
           cp "${plugin_jar}" "${context_dir}/plugin-libs/"
           if compgen -G "plugin-src/target/dependency/*.jar" > /dev/null; then
-            cp plugin-src/target/dependency/*.jar "${context_dir}/plugin-libs/"
+            find plugin-src/target/dependency -maxdepth 1 -type f -name '*.jar' ! -name 'fineract-*.jar' -exec cp {} "${context_dir}/plugin-libs/" \;
           fi
 
-          cp -R "plugin-src/pentahoReports/${{ matrix.reports_db }}/." "${context_dir}/pentahoReports/"
+          if compgen -G "${context_dir}/plugin-libs/fineract-*.jar" > /dev/null; then
+            echo "Found disallowed core Fineract jars in plugin-libs context." >&2
+            ls -1 "${context_dir}/plugin-libs" >&2
+            exit 1
+          fi
+
+          cp -R "plugin-src/pentahoReports/Postgresql/." "${context_dir}/pentahoReports/Postgresql/"
+          cp -R "plugin-src/pentahoReports/MariaDB/." "${context_dir}/pentahoReports/MariaDB/"
           cp docker/fineract-with-reporting-plugin.Dockerfile "${context_dir}/Dockerfile"
 
           echo "context_dir=${context_dir}" >> "${GITHUB_OUTPUT}"
@@ -233,9 +233,15 @@ jobs:
           docker run --rm --entrypoint sh ${{ steps.tags.outputs.local_image }} -c '
             set -e
             ls -1 /app/plugins/*.jar >/dev/null
-            test -d /app/pentahoReports
-            test -n "$(ls -A /app/pentahoReports)"
-            test "$FINERACT_PENTAHO_REPORTS_PATH" = "/app/pentahoReports"
+            if ls -1 /app/plugins/fineract-*.jar >/dev/null 2>&1; then
+              echo "Core Fineract jars detected under /app/plugins; this will break Liquibase startup."
+              exit 1
+            fi
+            test -d /app/pentahoReports/Postgresql
+            test -n "$(ls -A /app/pentahoReports/Postgresql)"
+            test -d /app/pentahoReports/MariaDB
+            test -n "$(ls -A /app/pentahoReports/MariaDB)"
+            test "$FINERACT_PENTAHO_REPORTS_PATH" = "/app/pentahoReports/Postgresql"
           '
 
       - name: Push image
@@ -251,11 +257,14 @@ jobs:
             echo "### Fineract Reporting Image Build"
             echo ""
             echo "- Trigger: \`${GITHUB_EVENT_NAME}\`"
-            echo "- Reports DB variant: \`${{ matrix.reports_db }}\`"
             echo "- Fineract ref: \`${{ steps.params.outputs.fineract_ref }}\`"
             echo "- Fineract SHA: \`${{ steps.tags.outputs.fineract_sha }}\`"
             echo "- Plugin ref: \`${{ steps.params.outputs.plugin_ref }}\`"
             echo "- Plugin SHA: \`${{ steps.tags.outputs.plugin_sha }}\`"
+            echo "- Image tag: \`${{ steps.tags.outputs.tag }}\`"
+            echo "- Embedded report templates: \`Postgresql\` and \`MariaDB\`"
+            echo "- Default report path: \`/app/pentahoReports/Postgresql\`"
+            echo "- MariaDB override: \`FINERACT_PENTAHO_REPORTS_PATH=/app/pentahoReports/MariaDB\`"
             echo "- Registry: \`${{ steps.params.outputs.registry }}\`"
             echo "- Force rebuild: \`${{ steps.params.outputs.force_rebuild }}\`"
             if [ "${{ steps.params.outputs.push_image }}" = "true" ]; then

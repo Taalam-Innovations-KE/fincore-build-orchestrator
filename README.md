@@ -11,17 +11,16 @@ The workflow in this repo builds Fineract from source, builds the reporting plug
 
 - `.github/workflows/build-fineract-with-reporting-plugin.yml`
 
-### Trigger modes
+### Trigger mode
 
 1. Manual trigger (`workflow_dispatch`) from this repo’s Actions tab.
-2. Scheduled trigger (`schedule`) every 30 minutes from this repo.
 
-### Matrix behavior
+### Image and tag behavior
 
-The workflow builds two image variants in parallel:
+The workflow builds one image per run.  
+The image tag is deterministic:
 
-- `Postgresql` report templates
-- `MariaDB` report templates
+`<fineract_sha>-<plugin_sha>`
 
 ## Required secrets
 
@@ -30,7 +29,7 @@ In `Taalam-Innovations-KE/fincore-build-orchestrator`:
 - `CROSS_REPO_TOKEN` (recommended): PAT/fine-grained token with read access to both source repos.
 - `DOCKERHUB_USERNAME` (required for Docker Hub pushes): your Docker Hub username.
 - `DOCKERHUB_TOKEN` (required for Docker Hub pushes): Docker Hub access token.
-- `GHCR_TOKEN` (optional, GHCR only): token with `packages:write` if `GITHUB_TOKEN` is not enough for your org package policy.
+- `GHCR_TOKEN` (required for GHCR pushes): token with `packages:write`.
 
 ## Manual build run
 
@@ -44,13 +43,11 @@ In `Taalam-Innovations-KE/fincore-build-orchestrator`:
    - `push_image` (`true` or `false`)
    - `force_rebuild` (`true` or `false`)
 
-## Auto rebuild from this repo only
+## Rebuild behavior
 
-No workflow is required in the plugin repository.
+The orchestrator computes a deterministic image tag:
 
-The orchestrator workflow polls source refs on its schedule and computes a deterministic image tag:
-
-`<fineract_sha>-<plugin_sha>-<db_variant>`
+`<fineract_sha>-<plugin_sha>`
 
 If `push_image=true` and that tag already exists in the registry, the run skips build/push.  
 If you need a rebuild of an existing tag, run manually with `force_rebuild=true`.
@@ -60,5 +57,16 @@ If you need a rebuild of an existing tag, run manually with `force_rebuild=true`
 The image is built with `docker/fineract-with-reporting-plugin.Dockerfile` and embeds:
 
 - plugin jars -> `/app/plugins`
-- report templates -> `/app/pentahoReports`
-- report path env var -> `FINERACT_PENTAHO_REPORTS_PATH=/app/pentahoReports`
+- Postgresql report templates -> `/app/pentahoReports/Postgresql`
+- MariaDB report templates -> `/app/pentahoReports/MariaDB`
+- default report path env var -> `FINERACT_PENTAHO_REPORTS_PATH=/app/pentahoReports/Postgresql`
+
+### Runtime DB selector via env file
+
+`fineract/compose.yaml` now maps one selector variable into the plugin report path:
+
+- `FINERACT_REPORTS_DB_TYPE=postgresql` -> `/app/pentahoReports/postgresql`
+- `FINERACT_REPORTS_DB_TYPE=mariadb` -> `/app/pentahoReports/mariadb`
+
+Set this in your env file (for example `fineract/.env`) and start compose normally.  
+You can also override the image in the same env file using `FINERACT_IMAGE=<repo:tag>`.

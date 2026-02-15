@@ -1,6 +1,6 @@
 services:
   fineract:
-    image: apache/fineract:latest
+    image: ${FINERACT_IMAGE:-apache/fineract:latest}
     container_name: fineract
 
     restart: unless-stopped
@@ -10,6 +10,10 @@ services:
 
     env_file:
       - .env
+
+    environment:
+      FINERACT_REPORTS_DB_TYPE: ${FINERACT_REPORTS_DB_TYPE:-postgresql}
+      FINERACT_PENTAHO_REPORTS_PATH: /app/pentahoReports/${FINERACT_REPORTS_DB_TYPE:-postgresql}
 
     volumes:
       # Logback override
