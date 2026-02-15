@@ -40,7 +40,7 @@ In `Taalam-Innovations-KE/fincore-build-orchestrator`:
 4. Provide:
    - `fineract_ref` (for example `develop`)
    - `plugin_ref` (for example `develop`)
-   - `image_repository` (for example `taalamke/fineract-reports`)
+   - `image_repository` (for example `taalamke/taalam-fineract`)
    - `push_image` (`true` or `false`)
    - `force_rebuild` (`true` or `false`)
 

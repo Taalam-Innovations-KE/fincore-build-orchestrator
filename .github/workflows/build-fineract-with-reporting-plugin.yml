@@ -12,9 +12,9 @@ on:
         required: true
         default: "develop"
       image_repository:
-        description: "Target image repository (for example taalamke/fineract-reports)"
+        description: "Target image repository (for example taalamke/taalam-fineract)"
         required: true
-        default: "taalamke/fineract-reports"
+        default: "taalamke/taalam-fineract"
       push_image:
         description: "Push built images to registry"
         required: true
@@ -54,7 +54,7 @@ jobs:
 
           fineract_ref="${INPUT_FINERACT_REF:-develop}"
           plugin_ref="${INPUT_PLUGIN_REF:-develop}"
-          image_repository="${INPUT_IMAGE_REPOSITORY:-taalamke/fineract-reports}"
+          image_repository="${INPUT_IMAGE_REPOSITORY:-taalamke/taalam-fineract}"
           push_image="${INPUT_PUSH_IMAGE:-true}"
           force_rebuild="${INPUT_FORCE_REBUILD:-false}"
 
