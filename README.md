@@ -70,3 +70,21 @@ The image is built with `docker/fineract-with-reporting-plugin.Dockerfile` and e
 
 Set this in your env file (for example `fineract/.env`) and start compose normally.  
 You can also override the image in the same env file using `FINERACT_IMAGE=<repo:tag>`.
+
+### Fineract imports writing to `/.fineract`
+
+If import/upload requests fail because Fineract tries writing under `/.fineract`, use the compose defaults in this repo:
+
+- `FINERACT_CONTENT_FILESYSTEM_ENABLED=true`
+- `FINERACT_CONTENT_FILESYSTEM_ROOT_FOLDER=/opt/fineract-content`
+- host bind mount `./data/fineract-content:/opt/fineract-content`
+
+Recovery steps:
+
+```bash
+cd fineract
+mkdir -p ./data/fineract-content
+sudo chown -R 1000:1000 ./data/fineract-content   # if your container runs as UID/GID 1000
+docker compose up -d --force-recreate fineract
+docker exec fineract sh -lc 'echo "$FINERACT_CONTENT_FILESYSTEM_ROOT_FOLDER" && ls -ld /opt/fineract-content'
+```

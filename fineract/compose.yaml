@@ -14,6 +14,8 @@ services:
     environment:
       FINERACT_REPORTS_DB_TYPE: ${FINERACT_REPORTS_DB_TYPE:-postgresql}
       FINERACT_PENTAHO_REPORTS_PATH: /app/pentahoReports/${FINERACT_REPORTS_DB_TYPE:-postgresql}
+      FINERACT_CONTENT_FILESYSTEM_ENABLED: ${FINERACT_CONTENT_FILESYSTEM_ENABLED:-true}
+      FINERACT_CONTENT_FILESYSTEM_ROOT_FOLDER: ${FINERACT_CONTENT_FILESYSTEM_ROOT_FOLDER:-/opt/fineract-content}
 
     volumes:
       # Logback override
@@ -24,6 +26,9 @@ services:
 
       # Application logs
       - ./logs:/var/logs/fineract:rw
+
+      # Writable filesystem content root for uploads/imports
+      - ./data/fineract-content:/opt/fineract-content:rw
 
     networks:
       - fincore
