@@ -30,7 +30,15 @@ on:
       reports_datasource_host:
         description: "Host value to inject into PRPT datasource URLs/properties"
         required: true
-        default: "fineractdb"
+        default: ""
+      reports_datasource_user:
+        description: "Username to inject into PRPT datasource properties"
+        required: true
+        default: ""
+      reports_datasource_password:
+        description: "Password to inject into PRPT datasource properties"
+        required: true
+        default: ""
       image_repository:
         description: "Target image repository (for example taalamke/taalam-fineract)"
         required: true
@@ -59,6 +67,8 @@ jobs:
           INPUT_PLUGIN_ZIP_URL: ${{ inputs.plugin_zip_url }}
           INPUT_PLUGIN_ZIP_SHA256: ${{ inputs.plugin_zip_sha256 }}
           INPUT_REPORTS_DATASOURCE_HOST: ${{ inputs.reports_datasource_host }}
+          INPUT_REPORTS_DATASOURCE_USER: ${{ inputs.reports_datasource_user }}
+          INPUT_REPORTS_DATASOURCE_PASSWORD: ${{ inputs.reports_datasource_password }}
           INPUT_IMAGE_REPOSITORY: ${{ inputs.image_repository }}
           INPUT_PUSH_IMAGE: ${{ inputs.push_image }}
         run: |
@@ -69,7 +79,9 @@ jobs:
           plugin_ref="${INPUT_PLUGIN_REF:-develop}"
           plugin_zip_url="${INPUT_PLUGIN_ZIP_URL:-}"
           plugin_zip_sha256="${INPUT_PLUGIN_ZIP_SHA256:-}"
-          reports_datasource_host="${INPUT_REPORTS_DATASOURCE_HOST:-fineractdb}"
+          reports_datasource_host="${INPUT_REPORTS_DATASOURCE_HOST:-}"
+          reports_datasource_user="${INPUT_REPORTS_DATASOURCE_USER:-}"
+          reports_datasource_password="${INPUT_REPORTS_DATASOURCE_PASSWORD:-}"
           image_repository="${INPUT_IMAGE_REPOSITORY:-taalamke/taalam-fineract}"
           push_image="${INPUT_PUSH_IMAGE:-true}"
 
@@ -78,6 +90,7 @@ jobs:
           plugin_source="$(echo "${plugin_source}" | tr '[:upper:]' '[:lower:]')"
           plugin_zip_sha256="$(echo "${plugin_zip_sha256}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
           reports_datasource_host="$(echo "${reports_datasource_host}" | tr -d '[:space:]')"
+          reports_datasource_user="$(echo "${reports_datasource_user}" | tr -d '[:space:]')"
 
           if [ "${push_image}" != "true" ] && [ "${push_image}" != "false" ]; then
             echo "Invalid push_image value: ${push_image}" >&2
@@ -99,6 +112,18 @@ jobs:
             exit 1
           fi
 
+          if [ -z "${reports_datasource_user}" ]; then
+            echo "reports_datasource_user cannot be empty" >&2
+            exit 1
+          fi
+
+          if [ -z "${reports_datasource_password}" ]; then
+            echo "reports_datasource_password cannot be empty" >&2
+            exit 1
+          fi
+
+          echo "::add-mask::${reports_datasource_password}"
+
           first_segment="${image_repository%%/*}"
           if [ "${first_segment}" = "${image_repository}" ]; then
             registry="docker.io"
@@ -119,6 +144,7 @@ jobs:
           echo "plugin_zip_url=${plugin_zip_url}" >> "${GITHUB_OUTPUT}"
           echo "plugin_zip_sha256=${plugin_zip_sha256}" >> "${GITHUB_OUTPUT}"
           echo "reports_datasource_host=${reports_datasource_host}" >> "${GITHUB_OUTPUT}"
+          echo "reports_datasource_user=${reports_datasource_user}" >> "${GITHUB_OUTPUT}"
           echo "image_repository=${image_repository}" >> "${GITHUB_OUTPUT}"
           echo "push_image=${push_image}" >> "${GITHUB_OUTPUT}"
           echo "registry=${registry}" >> "${GITHUB_OUTPUT}"
@@ -301,17 +327,44 @@ jobs:
             cp -R "${mariadb_reports_dir}/." "${context_dir}/pentahoReports/MariaDB/"
           fi
 
-          # Rewrite PRPT datasource host so report SQL metadata/cache prep resolves DB host in this environment.
-          rewrite_prpt_host() {
+          xml_escape() {
+            printf '%s' "$1" \
+              | sed -e 's/&/\&amp;/g' \
+                    -e 's/</\&lt;/g' \
+                    -e 's/>/\&gt;/g' \
+                    -e 's/"/\&quot;/g' \
+                    -e "s/'/\&apos;/g"
+          }
+
+          # Rewrite PRPT datasource defaults so report SQL metadata/cache prep resolves in this runtime.
+          rewrite_prpt_datasource() {
             report_dir="$1"
             target_host="$2"
+            target_user="$3"
+            target_password="$4"
+            target_user_xml="$(xml_escape "${target_user}")"
+            target_password_xml="$(xml_escape "${target_password}")"
             while IFS= read -r prpt_file; do
               tmp_dir="$(mktemp -d)"
               unzip -q "${prpt_file}" -d "${tmp_dir}"
               ds_file="${tmp_dir}/datasources/sql-ds.xml"
               if [ -f "${ds_file}" ]; then
-                perl -0777 -i -pe 's#(<data:url>\s*jdbc:[^:]+://)[^/:<]+(:\d+/[^<]*</data:url>)#${1}'"${target_host}"'${2}#g' "${ds_file}"
-                perl -0777 -i -pe 's#(<data:property name="::pentaho-reporting::hostname">)[^<]*(</data:property>)#${1}'"${target_host}"'${2}#g' "${ds_file}"
+                TARGET_HOST="${target_host}" \
+                TARGET_USER="${target_user_xml}" \
+                TARGET_PASSWORD="${target_password_xml}" \
+                perl -0777 -i -pe '
+                  s#(<data:url>\s*jdbc:[^:]+://)[^/:<]+(:\d+/[^<]*</data:url>)#$1.$ENV{TARGET_HOST}.$2#ge;
+                  s#(<data:property name="::pentaho-reporting::hostname">)[^<]*(</data:property>)#$1.$ENV{TARGET_HOST}.$2#ge;
+                  s#(<data:property name="user">)[^<]*(</data:property>)#$1.$ENV{TARGET_USER}.$2#ge;
+                  s#(<data:property name="password">)[^<]*(</data:property>)#$1.$ENV{TARGET_PASSWORD}.$2#ge;
+                ' "${ds_file}"
+
+                if ! grep -q 'tenantUrl' "${ds_file}" \
+                  || ! grep -q 'username' "${ds_file}" \
+                  || ! grep -q 'password' "${ds_file}"; then
+                  echo "PRPT datasource does not include runtime tenantUrl/username/password tokens: ${prpt_file}" >&2
+                  exit 1
+                fi
               fi
               (cd "${tmp_dir}" && zip -qr "${prpt_file}.new" .)
               mv "${prpt_file}.new" "${prpt_file}"
@@ -319,8 +372,16 @@ jobs:
             done < <(find "${report_dir}" -type f -name '*.prpt' | sort)
           }
 
-          rewrite_prpt_host "${context_dir}/pentahoReports/Postgresql" "${{ steps.params.outputs.reports_datasource_host }}"
-          rewrite_prpt_host "${context_dir}/pentahoReports/MariaDB" "${{ steps.params.outputs.reports_datasource_host }}"
+          rewrite_prpt_datasource \
+            "${context_dir}/pentahoReports/Postgresql" \
+            "${{ steps.params.outputs.reports_datasource_host }}" \
+            "${{ steps.params.outputs.reports_datasource_user }}" \
+            "${{ inputs.reports_datasource_password }}"
+          rewrite_prpt_datasource \
+            "${context_dir}/pentahoReports/MariaDB" \
+            "${{ steps.params.outputs.reports_datasource_host }}" \
+            "${{ steps.params.outputs.reports_datasource_user }}" \
+            "${{ inputs.reports_datasource_password }}"
 
           while IFS= read -r dep; do
             dep_name="$(basename "${dep}")"
@@ -381,7 +442,11 @@ jobs:
       - name: Validate embedded plugin and report path
         run: |
           set -euo pipefail
-          docker run --rm --entrypoint sh ${{ steps.tags.outputs.local_image }} -c '
+          docker run --rm \
+            -e REPORTS_DS_HOST="${{ steps.params.outputs.reports_datasource_host }}" \
+            -e REPORTS_DS_USER="${{ steps.params.outputs.reports_datasource_user }}" \
+            -e REPORTS_DS_PASSWORD="${{ inputs.reports_datasource_password }}" \
+            --entrypoint sh ${{ steps.tags.outputs.local_image }} -c '
             set -e
             ls -1 /app/plugins/*.jar >/dev/null
             if ls -1 /app/plugins/fineract-*.jar >/dev/null 2>&1 \
@@ -394,6 +459,14 @@ jobs:
             test -n "$(ls -A /app/pentahoReports/Postgresql)"
             test -d /app/pentahoReports/MariaDB
             test -n "$(ls -A /app/pentahoReports/MariaDB)"
+            pg_report="$(find /app/pentahoReports/Postgresql -type f -name "*.prpt" | head -n 1)"
+            unzip -p "${pg_report}" datasources/sql-ds.xml > /tmp/pg-ds.xml
+            grep -F "<data:property name=\"::pentaho-reporting::hostname\">${REPORTS_DS_HOST}</data:property>" /tmp/pg-ds.xml >/dev/null
+            grep -F "<data:property name=\"user\">${REPORTS_DS_USER}</data:property>" /tmp/pg-ds.xml >/dev/null
+            mariadb_report="$(find /app/pentahoReports/MariaDB -type f -name "*.prpt" | head -n 1)"
+            unzip -p "${mariadb_report}" datasources/sql-ds.xml > /tmp/mariadb-ds.xml
+            grep -F "<data:property name=\"::pentaho-reporting::hostname\">${REPORTS_DS_HOST}</data:property>" /tmp/mariadb-ds.xml >/dev/null
+            grep -F "<data:property name=\"user\">${REPORTS_DS_USER}</data:property>" /tmp/mariadb-ds.xml >/dev/null
             test "$FINERACT_PENTAHO_REPORTS_PATH" = "/app/pentahoReports/Postgresql"
             command -v fc-list >/dev/null 2>&1
             fc-list : family >/dev/null
@@ -422,6 +495,8 @@ jobs:
               echo "- Plugin ZIP: \`${{ steps.params.outputs.plugin_zip_url }}\`"
             fi
             echo "- Reports datasource host override: \`${{ steps.params.outputs.reports_datasource_host }}\`"
+            echo "- Reports datasource user override: \`${{ steps.params.outputs.reports_datasource_user }}\`"
+            echo "- Reports datasource password override: \`***\`"
             echo "- Plugin SHA: \`${{ steps.tags.outputs.plugin_sha }}\`"
             echo "- Image tag: \`${{ steps.tags.outputs.tag }}\`"
             echo "- Embedded report templates: \`Postgresql\` and \`MariaDB\`"
