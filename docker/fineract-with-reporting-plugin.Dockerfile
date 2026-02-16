@@ -3,13 +3,9 @@ FROM ${BASE_IMAGE}
 
 USER root
 
-# Install fonts required for Pentaho PDF report generation
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    fontconfig \
-    fonts-dejavu-core \
-    fonts-liberation \
-    && fc-cache -f -v \
-    && rm -rf /var/lib/apt/lists/*
+# Install fonts required for Pentaho PDF report generation (Alpine-based image)
+RUN apk add --no-cache fontconfig ttf-dejavu ttf-liberation \
+    && fc-cache -f -v
 
 RUN mkdir -p /app/plugins /app/pentahoReports \
     && chown -R nobody:nogroup /app/plugins /app/pentahoReports
