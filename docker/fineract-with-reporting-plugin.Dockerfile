@@ -3,9 +3,14 @@ FROM ${BASE_IMAGE}
 
 USER root
 
-# Install fonts required for Pentaho PDF report generation (Alpine-based image)
-RUN apk add --no-cache fontconfig ttf-dejavu ttf-liberation \
-    && fc-cache -f -v
+# Install fonts and font-management tools
+RUN apk update && apk add --no-cache \
+    fontconfig \
+    ttf-dejavu \
+    msttcorefonts-installer
+
+# Update the font cache so Java can see them
+RUN update-ms-fonts && fc-cache -f
 
 RUN mkdir -p /app/plugins /app/pentahoReports \
     && chown -R nobody:nogroup /app/plugins /app/pentahoReports
