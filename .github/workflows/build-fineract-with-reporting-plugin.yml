@@ -27,6 +27,10 @@ on:
         description: "Optional SHA256 for plugin_zip_url (recommended)"
         required: false
         default: ""
+      reports_datasource_host:
+        description: "Host value to inject into PRPT datasource URLs/properties"
+        required: true
+        default: "fineractdb"
       image_repository:
         description: "Target image repository (for example taalamke/taalam-fineract)"
         required: true
@@ -54,6 +58,7 @@ jobs:
           INPUT_PLUGIN_REF: ${{ inputs.plugin_ref }}
           INPUT_PLUGIN_ZIP_URL: ${{ inputs.plugin_zip_url }}
           INPUT_PLUGIN_ZIP_SHA256: ${{ inputs.plugin_zip_sha256 }}
+          INPUT_REPORTS_DATASOURCE_HOST: ${{ inputs.reports_datasource_host }}
           INPUT_IMAGE_REPOSITORY: ${{ inputs.image_repository }}
           INPUT_PUSH_IMAGE: ${{ inputs.push_image }}
         run: |
@@ -64,6 +69,7 @@ jobs:
           plugin_ref="${INPUT_PLUGIN_REF:-develop}"
           plugin_zip_url="${INPUT_PLUGIN_ZIP_URL:-}"
           plugin_zip_sha256="${INPUT_PLUGIN_ZIP_SHA256:-}"
+          reports_datasource_host="${INPUT_REPORTS_DATASOURCE_HOST:-fineractdb}"
           image_repository="${INPUT_IMAGE_REPOSITORY:-taalamke/taalam-fineract}"
           push_image="${INPUT_PUSH_IMAGE:-true}"
 
@@ -71,6 +77,7 @@ jobs:
           push_image="$(echo "${push_image}" | tr '[:upper:]' '[:lower:]')"
           plugin_source="$(echo "${plugin_source}" | tr '[:upper:]' '[:lower:]')"
           plugin_zip_sha256="$(echo "${plugin_zip_sha256}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+          reports_datasource_host="$(echo "${reports_datasource_host}" | tr -d '[:space:]')"
 
           if [ "${push_image}" != "true" ] && [ "${push_image}" != "false" ]; then
             echo "Invalid push_image value: ${push_image}" >&2
@@ -84,6 +91,11 @@ jobs:
 
           if [ "${plugin_source}" = "prebuilt" ] && [ -z "${plugin_zip_url}" ]; then
             echo "plugin_zip_url is required when plugin_source=prebuilt" >&2
+            exit 1
+          fi
+
+          if [ -z "${reports_datasource_host}" ]; then
+            echo "reports_datasource_host cannot be empty" >&2
             exit 1
           fi
 
@@ -106,6 +118,7 @@ jobs:
           echo "plugin_ref=${plugin_ref}" >> "${GITHUB_OUTPUT}"
           echo "plugin_zip_url=${plugin_zip_url}" >> "${GITHUB_OUTPUT}"
           echo "plugin_zip_sha256=${plugin_zip_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "reports_datasource_host=${reports_datasource_host}" >> "${GITHUB_OUTPUT}"
           echo "image_repository=${image_repository}" >> "${GITHUB_OUTPUT}"
           echo "push_image=${push_image}" >> "${GITHUB_OUTPUT}"
           echo "registry=${registry}" >> "${GITHUB_OUTPUT}"
@@ -288,6 +301,27 @@ jobs:
             cp -R "${mariadb_reports_dir}/." "${context_dir}/pentahoReports/MariaDB/"
           fi
 
+          # Rewrite PRPT datasource host so report SQL metadata/cache prep resolves DB host in this environment.
+          rewrite_prpt_host() {
+            report_dir="$1"
+            target_host="$2"
+            while IFS= read -r prpt_file; do
+              tmp_dir="$(mktemp -d)"
+              unzip -q "${prpt_file}" -d "${tmp_dir}"
+              ds_file="${tmp_dir}/datasources/sql-ds.xml"
+              if [ -f "${ds_file}" ]; then
+                perl -0777 -i -pe 's#(<data:url>\s*jdbc:[^:]+://)[^/:<]+(:\d+/[^<]*</data:url>)#${1}'"${target_host}"'${2}#g' "${ds_file}"
+                perl -0777 -i -pe 's#(<data:property name="::pentaho-reporting::hostname">)[^<]*(</data:property>)#${1}'"${target_host}"'${2}#g' "${ds_file}"
+              fi
+              (cd "${tmp_dir}" && zip -qr "${prpt_file}.new" .)
+              mv "${prpt_file}.new" "${prpt_file}"
+              rm -rf "${tmp_dir}"
+            done < <(find "${report_dir}" -type f -name '*.prpt' | sort)
+          }
+
+          rewrite_prpt_host "${context_dir}/pentahoReports/Postgresql" "${{ steps.params.outputs.reports_datasource_host }}"
+          rewrite_prpt_host "${context_dir}/pentahoReports/MariaDB" "${{ steps.params.outputs.reports_datasource_host }}"
+
           while IFS= read -r dep; do
             dep_name="$(basename "${dep}")"
             dep_artifact="$(echo "${dep_name}" | sed -E 's/\.jar$//; s/-[0-9].*$//')"
@@ -387,6 +421,7 @@ jobs:
             if [ "${{ steps.params.outputs.plugin_source }}" = "prebuilt" ]; then
               echo "- Plugin ZIP: \`${{ steps.params.outputs.plugin_zip_url }}\`"
             fi
+            echo "- Reports datasource host override: \`${{ steps.params.outputs.reports_datasource_host }}\`"
             echo "- Plugin SHA: \`${{ steps.tags.outputs.plugin_sha }}\`"
             echo "- Image tag: \`${{ steps.tags.outputs.tag }}\`"
             echo "- Embedded report templates: \`Postgresql\` and \`MariaDB\`"

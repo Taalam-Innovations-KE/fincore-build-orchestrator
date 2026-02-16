@@ -43,6 +43,7 @@ In `Taalam-Innovations-KE/fincore-build-orchestrator`:
    - `plugin_source` (`prebuilt` or `build-from-source`)
    - `plugin_zip_url` (when `plugin_source=prebuilt`)
    - `plugin_zip_sha256` (optional but recommended when `plugin_source=prebuilt`)
+   - `reports_datasource_host` (host injected into PRPT datasource URLs/properties, default `fineractdb`)
    - `plugin_ref` (when `plugin_source=build-from-source`, for example `develop`)
    - `image_repository` (for example `taalamke/taalam-fineract`)
    - `push_image` (`true` or `false`)
@@ -66,6 +67,7 @@ The image is built with `docker/fineract-with-reporting-plugin.Dockerfile` and e
 - plugin jars -> `/app/plugins`
 - Postgresql report templates -> `/app/pentahoReports/Postgresql`
 - MariaDB report templates -> `/app/pentahoReports/MariaDB`
+- PRPT datasource host rewrite at build time via workflow input `reports_datasource_host`
 - installed system fonts (`fontconfig`, `DejaVu`, `Liberation`, `Noto`) with cache refresh for Pentaho PDF rendering
 - default report path env var -> `FINERACT_PENTAHO_REPORTS_PATH=/app/pentahoReports/Postgresql`
 
