@@ -261,20 +261,23 @@ jobs:
             unzip -q "${plugin_zip_file}" -d "${plugin_extract_dir}"
 
             libs_dir="$(find "${plugin_extract_dir}" -type d -name libs | head -n 1)"
-            if [ -z "${libs_dir}" ]; then
-              echo "Could not locate libs directory in prebuilt plugin ZIP." >&2
+            if [ -n "${libs_dir}" ] && compgen -G "${libs_dir}/*.jar" > /dev/null; then
+              cp "${libs_dir}"/*.jar "${plugin_stage_dir}/candidates/"
+            else
+              # Newer prebuilt ZIPs place jars in the root plugin directory (no libs/).
+              while IFS= read -r jar_file; do
+                cp "${jar_file}" "${plugin_stage_dir}/candidates/"
+              done < <(find "${plugin_extract_dir}" -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' | sort)
+            fi
+
+            if ! compgen -G "${plugin_stage_dir}/candidates/*.jar" > /dev/null; then
+              echo "Could not locate plugin jars in prebuilt plugin ZIP." >&2
               find "${plugin_extract_dir}" -maxdepth 4 -type d | sort >&2
               exit 1
             fi
 
-            if ! compgen -G "${libs_dir}/*.jar" > /dev/null; then
-              echo "No jars found under ${libs_dir}" >&2
-              exit 1
-            fi
-            cp "${libs_dir}"/*.jar "${plugin_stage_dir}/candidates/"
-
-            postgres_reports_dir="$(find "${plugin_extract_dir}" -type d -path '*pentahoReports/Postgresql' | head -n 1)"
-            mariadb_reports_dir="$(find "${plugin_extract_dir}" -type d -path '*pentahoReports/MariaDB' | head -n 1)"
+            postgres_reports_dir="$(find "${plugin_extract_dir}" -type d \( -path '*pentahoReports/Postgresql' -o -path '*/Postgresql' \) | head -n 1)"
+            mariadb_reports_dir="$(find "${plugin_extract_dir}" -type d \( -path '*pentahoReports/MariaDB' -o -path '*/MariaDB' \) | head -n 1)"
             if [ -z "${postgres_reports_dir}" ] || [ -z "${mariadb_reports_dir}" ]; then
               echo "Could not locate Postgresql/MariaDB report directories in prebuilt plugin ZIP." >&2
               find "${plugin_extract_dir}" -maxdepth 5 -type d | sort >&2
