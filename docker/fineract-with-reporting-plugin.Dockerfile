@@ -6,11 +6,6 @@ USER root
 RUN set -eux; \
     if command -v apk >/dev/null 2>&1; then \
       apk add --no-cache fontconfig ttf-dejavu ttf-liberation; \
-      for pkg in font-noto noto-fonts noto-fonts-cjk noto-fonts-emoji; do \
-        if apk search -qe "${pkg}" >/dev/null 2>&1; then \
-          apk add --no-cache "${pkg}"; \
-        fi; \
-      done; \
       if apk search -qe msttcorefonts-installer >/dev/null 2>&1; then \
         apk add --no-cache msttcorefonts-installer; \
         update-ms-fonts; \
