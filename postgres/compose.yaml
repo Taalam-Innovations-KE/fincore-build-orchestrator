@@ -14,7 +14,9 @@ services:
       timeout: 5s
       retries: 20
     networks:
-      - fincore
+      fincore:
+        aliases:
+          - fineractdb
 
 volumes:
   fincore_pgdata:
