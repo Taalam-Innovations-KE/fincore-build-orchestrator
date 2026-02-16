@@ -5,7 +5,7 @@ Build orchestration for distributed source repos:
 - `Taalam-Innovations-KE/fineract`
 - `Taalam-Innovations-KE/taalam-fincore-reporting-plugin`
 
-The workflow in this repo builds Fineract from source, builds the reporting plugin from source, embeds plugin jars and Pentaho report templates into a final Docker image, and optionally pushes the image to Docker Hub (or GHCR).
+The workflow in this repo builds Fineract from source, sources the reporting plugin artifacts (prebuilt ZIP by default, source build optional), embeds plugin jars and Pentaho report templates into a final Docker image, and optionally pushes the image to Docker Hub (or GHCR).
 
 ## Workflow in this repo
 
@@ -40,7 +40,10 @@ In `Taalam-Innovations-KE/fincore-build-orchestrator`:
 3. Click **Run workflow**.
 4. Provide:
    - `fineract_ref` (for example `develop`)
-   - `plugin_ref` (for example `develop`)
+   - `plugin_source` (`prebuilt` or `build-from-source`)
+   - `plugin_zip_url` (when `plugin_source=prebuilt`)
+   - `plugin_zip_sha256` (optional but recommended when `plugin_source=prebuilt`)
+   - `plugin_ref` (when `plugin_source=build-from-source`, for example `develop`)
    - `image_repository` (for example `taalamke/taalam-fineract`)
    - `push_image` (`true` or `false`)
 
@@ -63,6 +66,7 @@ The image is built with `docker/fineract-with-reporting-plugin.Dockerfile` and e
 - plugin jars -> `/app/plugins`
 - Postgresql report templates -> `/app/pentahoReports/Postgresql`
 - MariaDB report templates -> `/app/pentahoReports/MariaDB`
+- installed system fonts (`fontconfig`, `DejaVu`, `Liberation`, `Noto`) with cache refresh for Pentaho PDF rendering
 - default report path env var -> `FINERACT_PENTAHO_REPORTS_PATH=/app/pentahoReports/Postgresql`
 
 ### Runtime DB selector via env file

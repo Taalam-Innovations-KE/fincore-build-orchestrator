@@ -7,10 +7,26 @@ on:
         description: "Branch, tag, or SHA for Taalam-Innovations-KE/fineract"
         required: true
         default: "develop"
-      plugin_ref:
-        description: "Branch, tag, or SHA for Taalam-Innovations-KE/taalam-fincore-reporting-plugin"
+      plugin_source:
+        description: "How to source reporting plugin artifacts"
         required: true
+        default: "prebuilt"
+        type: choice
+        options:
+          - prebuilt
+          - build-from-source
+      plugin_ref:
+        description: "Branch, tag, or SHA for Taalam-Innovations-KE/taalam-fincore-reporting-plugin (used only when plugin_source=build-from-source)"
+        required: false
         default: "develop"
+      plugin_zip_url:
+        description: "Prebuilt reporting plugin ZIP URL (used when plugin_source=prebuilt)"
+        required: true
+        default: "https://sourceforge.net/projects/mifos/files/mifos-plugins/MifosReportingPlugin/MifosReportingPlugin-1.14.0.zip/download"
+      plugin_zip_sha256:
+        description: "Optional SHA256 for plugin_zip_url (recommended)"
+        required: false
+        default: ""
       image_repository:
         description: "Target image repository (for example taalamke/taalam-fineract)"
         required: true
@@ -34,22 +50,40 @@ jobs:
         id: params
         env:
           INPUT_FINERACT_REF: ${{ inputs.fineract_ref }}
+          INPUT_PLUGIN_SOURCE: ${{ inputs.plugin_source }}
           INPUT_PLUGIN_REF: ${{ inputs.plugin_ref }}
+          INPUT_PLUGIN_ZIP_URL: ${{ inputs.plugin_zip_url }}
+          INPUT_PLUGIN_ZIP_SHA256: ${{ inputs.plugin_zip_sha256 }}
           INPUT_IMAGE_REPOSITORY: ${{ inputs.image_repository }}
           INPUT_PUSH_IMAGE: ${{ inputs.push_image }}
         run: |
           set -euo pipefail
 
           fineract_ref="${INPUT_FINERACT_REF:-develop}"
+          plugin_source="${INPUT_PLUGIN_SOURCE:-prebuilt}"
           plugin_ref="${INPUT_PLUGIN_REF:-develop}"
+          plugin_zip_url="${INPUT_PLUGIN_ZIP_URL:-}"
+          plugin_zip_sha256="${INPUT_PLUGIN_ZIP_SHA256:-}"
           image_repository="${INPUT_IMAGE_REPOSITORY:-taalamke/taalam-fineract}"
           push_image="${INPUT_PUSH_IMAGE:-true}"
 
           image_repository="$(echo "${image_repository}" | tr '[:upper:]' '[:lower:]')"
           push_image="$(echo "${push_image}" | tr '[:upper:]' '[:lower:]')"
+          plugin_source="$(echo "${plugin_source}" | tr '[:upper:]' '[:lower:]')"
+          plugin_zip_sha256="$(echo "${plugin_zip_sha256}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
 
           if [ "${push_image}" != "true" ] && [ "${push_image}" != "false" ]; then
             echo "Invalid push_image value: ${push_image}" >&2
+            exit 1
+          fi
+
+          if [ "${plugin_source}" != "prebuilt" ] && [ "${plugin_source}" != "build-from-source" ]; then
+            echo "Invalid plugin_source value: ${plugin_source}" >&2
+            exit 1
+          fi
+
+          if [ "${plugin_source}" = "prebuilt" ] && [ -z "${plugin_zip_url}" ]; then
+            echo "plugin_zip_url is required when plugin_source=prebuilt" >&2
             exit 1
           fi
 
@@ -68,7 +102,10 @@ jobs:
           fi
 
           echo "fineract_ref=${fineract_ref}" >> "${GITHUB_OUTPUT}"
+          echo "plugin_source=${plugin_source}" >> "${GITHUB_OUTPUT}"
           echo "plugin_ref=${plugin_ref}" >> "${GITHUB_OUTPUT}"
+          echo "plugin_zip_url=${plugin_zip_url}" >> "${GITHUB_OUTPUT}"
+          echo "plugin_zip_sha256=${plugin_zip_sha256}" >> "${GITHUB_OUTPUT}"
           echo "image_repository=${image_repository}" >> "${GITHUB_OUTPUT}"
           echo "push_image=${push_image}" >> "${GITHUB_OUTPUT}"
           echo "registry=${registry}" >> "${GITHUB_OUTPUT}"
@@ -87,6 +124,7 @@ jobs:
           token: ${{ secrets.CROSS_REPO_TOKEN != '' && secrets.CROSS_REPO_TOKEN || github.token }}
 
       - name: Checkout reporting plugin source
+        if: steps.params.outputs.plugin_source == 'build-from-source'
         uses: actions/checkout@v4
         with:
           repository: Taalam-Innovations-KE/taalam-fincore-reporting-plugin
@@ -100,7 +138,11 @@ jobs:
           set -euo pipefail
 
           fineract_sha="$(git -C fineract-src rev-parse --short=12 HEAD)"
-          plugin_sha="$(git -C plugin-src rev-parse --short=12 HEAD)"
+          if [ "${{ steps.params.outputs.plugin_source }}" = "build-from-source" ]; then
+            plugin_sha="$(git -C plugin-src rev-parse --short=12 HEAD)"
+          else
+            plugin_sha="$(printf '%s' "${{ steps.params.outputs.plugin_zip_url }}" | sha256sum | cut -c1-12)"
+          fi
 
           tag="${fineract_sha}-${plugin_sha}"
           local_image="fineract-with-reporting:${tag}"
@@ -150,6 +192,7 @@ jobs:
             -x test -x cucumber
 
       - name: Build reporting plugin and dependencies
+        if: steps.params.outputs.plugin_source == 'build-from-source'
         working-directory: plugin-src
         run: |
           set -euo pipefail
@@ -164,7 +207,8 @@ jobs:
         run: |
           set -euo pipefail
           context_dir="${RUNNER_TEMP}/fineract-reporting-context-${{ steps.tags.outputs.tag }}"
-          mkdir -p "${context_dir}/plugin-libs" "${context_dir}/pentahoReports/Postgresql" "${context_dir}/pentahoReports/MariaDB"
+          plugin_stage_dir="${RUNNER_TEMP}/plugin-stage-${{ steps.tags.outputs.tag }}"
+          mkdir -p "${context_dir}/plugin-libs" "${context_dir}/pentahoReports/Postgresql" "${context_dir}/pentahoReports/MariaDB" "${plugin_stage_dir}/candidates"
           base_artifacts_file="${context_dir}/base-artifacts.txt"
 
           docker run --rm --entrypoint sh ${{ steps.tags.outputs.base_image }} -c '
@@ -180,28 +224,77 @@ jobs:
             exit 1
           fi
 
-          plugin_jar="$(find plugin-src/target -maxdepth 1 -type f -name 'pentaho-plugin-*.jar' ! -name '*sources*' ! -name '*javadoc*' | head -n 1)"
-          if [ -z "${plugin_jar}" ]; then
-            echo "Plugin jar not found under plugin-src/target" >&2
-            exit 1
+          if [ "${{ steps.params.outputs.plugin_source }}" = "build-from-source" ]; then
+            plugin_jar="$(find plugin-src/target -maxdepth 1 -type f -name 'pentaho-plugin-*.jar' ! -name '*sources*' ! -name '*javadoc*' | head -n 1)"
+            if [ -z "${plugin_jar}" ]; then
+              echo "Plugin jar not found under plugin-src/target" >&2
+              exit 1
+            fi
+
+            cp "${plugin_jar}" "${plugin_stage_dir}/candidates/"
+            if compgen -G "plugin-src/target/dependency/*.jar" > /dev/null; then
+              cp plugin-src/target/dependency/*.jar "${plugin_stage_dir}/candidates/"
+            fi
+
+            cp -R "plugin-src/pentahoReports/Postgresql/." "${context_dir}/pentahoReports/Postgresql/"
+            cp -R "plugin-src/pentahoReports/MariaDB/." "${context_dir}/pentahoReports/MariaDB/"
+          else
+            plugin_zip_file="${plugin_stage_dir}/plugin.zip"
+            plugin_extract_dir="${plugin_stage_dir}/extracted"
+
+            curl -fL --retry 5 --retry-all-errors --connect-timeout 20 \
+              -o "${plugin_zip_file}" \
+              "${{ steps.params.outputs.plugin_zip_url }}"
+
+            if [ -n "${{ steps.params.outputs.plugin_zip_sha256 }}" ]; then
+              echo "${{ steps.params.outputs.plugin_zip_sha256 }}  ${plugin_zip_file}" | sha256sum -c -
+            fi
+
+            unzip -q "${plugin_zip_file}" -d "${plugin_extract_dir}"
+
+            libs_dir="$(find "${plugin_extract_dir}" -type d -name libs | head -n 1)"
+            if [ -z "${libs_dir}" ]; then
+              echo "Could not locate libs directory in prebuilt plugin ZIP." >&2
+              find "${plugin_extract_dir}" -maxdepth 4 -type d | sort >&2
+              exit 1
+            fi
+
+            if ! compgen -G "${libs_dir}/*.jar" > /dev/null; then
+              echo "No jars found under ${libs_dir}" >&2
+              exit 1
+            fi
+            cp "${libs_dir}"/*.jar "${plugin_stage_dir}/candidates/"
+
+            postgres_reports_dir="$(find "${plugin_extract_dir}" -type d -path '*pentahoReports/Postgresql' | head -n 1)"
+            mariadb_reports_dir="$(find "${plugin_extract_dir}" -type d -path '*pentahoReports/MariaDB' | head -n 1)"
+            if [ -z "${postgres_reports_dir}" ] || [ -z "${mariadb_reports_dir}" ]; then
+              echo "Could not locate Postgresql/MariaDB report directories in prebuilt plugin ZIP." >&2
+              find "${plugin_extract_dir}" -maxdepth 5 -type d | sort >&2
+              exit 1
+            fi
+
+            cp -R "${postgres_reports_dir}/." "${context_dir}/pentahoReports/Postgresql/"
+            cp -R "${mariadb_reports_dir}/." "${context_dir}/pentahoReports/MariaDB/"
           fi
 
-          cp "${plugin_jar}" "${context_dir}/plugin-libs/"
-          if compgen -G "plugin-src/target/dependency/*.jar" > /dev/null; then
-            while IFS= read -r dep; do
-              dep_name="$(basename "${dep}")"
-              dep_artifact="$(echo "${dep_name}" | sed -E 's/\.jar$//; s/-[0-9].*$//')"
+          while IFS= read -r dep; do
+            dep_name="$(basename "${dep}")"
+            dep_artifact="$(echo "${dep_name}" | sed -E 's/\.jar$//; s/-[0-9].*$//')"
 
-              if grep -Fxq "${dep_artifact}" "${base_artifacts_file}"; then
-                continue
-              fi
+            if grep -Fxq "${dep_artifact}" "${base_artifacts_file}"; then
+              continue
+            fi
 
-              if [[ "${dep_name}" == fineract-*.jar || "${dep_name}" == commons-lang3-*.jar || "${dep_name}" == *spring*.jar ]]; then
-                continue
-              fi
+            if [[ "${dep_name}" == fineract-*.jar || "${dep_name}" == commons-lang3-*.jar || "${dep_name}" == *spring*.jar ]]; then
+              continue
+            fi
 
-              cp "${dep}" "${context_dir}/plugin-libs/"
-            done < <(find plugin-src/target/dependency -maxdepth 1 -type f -name '*.jar' | sort)
+            cp "${dep}" "${context_dir}/plugin-libs/"
+          done < <(find "${plugin_stage_dir}/candidates" -maxdepth 1 -type f -name '*.jar' | sort)
+
+          if ! compgen -G "${context_dir}/plugin-libs/*.jar" > /dev/null; then
+            echo "No plugin jars were selected for /app/plugins." >&2
+            exit 1
           fi
 
           if compgen -G "${context_dir}/plugin-libs/fineract-*.jar" > /dev/null \
@@ -212,8 +305,21 @@ jobs:
             exit 1
           fi
 
-          cp -R "plugin-src/pentahoReports/Postgresql/." "${context_dir}/pentahoReports/Postgresql/"
-          cp -R "plugin-src/pentahoReports/MariaDB/." "${context_dir}/pentahoReports/MariaDB/"
+          font_mapper_found="false"
+          for jar_file in "${context_dir}"/plugin-libs/*.jar; do
+            if jar tf "${jar_file}" | grep -q 'com/lowagie/text/pdf/FontMapper.class'; then
+              echo "Found FontMapper in $(basename "${jar_file}")"
+              font_mapper_found="true"
+              break
+            fi
+          done
+
+          if [ "${font_mapper_found}" != "true" ]; then
+            echo "Missing com/lowagie/text/pdf/FontMapper.class in plugin jars; PDF export will fail." >&2
+            ls -1 "${context_dir}/plugin-libs" >&2
+            exit 1
+          fi
+
           cp docker/fineract-with-reporting-plugin.Dockerfile "${context_dir}/Dockerfile"
 
           echo "context_dir=${context_dir}" >> "${GITHUB_OUTPUT}"
@@ -244,6 +350,8 @@ jobs:
             test -d /app/pentahoReports/MariaDB
             test -n "$(ls -A /app/pentahoReports/MariaDB)"
             test "$FINERACT_PENTAHO_REPORTS_PATH" = "/app/pentahoReports/Postgresql"
+            command -v fc-list >/dev/null 2>&1
+            fc-list : family >/dev/null
           '
 
       - name: Push image
@@ -263,7 +371,11 @@ jobs:
             echo "- Trigger: \`${GITHUB_EVENT_NAME}\`"
             echo "- Fineract ref: \`${{ steps.params.outputs.fineract_ref }}\`"
             echo "- Fineract SHA: \`${{ steps.tags.outputs.fineract_sha }}\`"
+            echo "- Plugin source: \`${{ steps.params.outputs.plugin_source }}\`"
             echo "- Plugin ref: \`${{ steps.params.outputs.plugin_ref }}\`"
+            if [ "${{ steps.params.outputs.plugin_source }}" = "prebuilt" ]; then
+              echo "- Plugin ZIP: \`${{ steps.params.outputs.plugin_zip_url }}\`"
+            fi
             echo "- Plugin SHA: \`${{ steps.tags.outputs.plugin_sha }}\`"
             echo "- Image tag: \`${{ steps.tags.outputs.tag }}\`"
             echo "- Embedded report templates: \`Postgresql\` and \`MariaDB\`"
