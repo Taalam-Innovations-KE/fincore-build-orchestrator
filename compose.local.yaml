@@ -1,0 +1,57 @@
+# Local development overlay (no Traefik, no TLS, ports published to host).
+#
+#   docker compose -f compose.yaml -f compose.local.yaml up -d   (or: make up-local)
+#
+# Keycloak is reachable at a single hostname `keycloak:8080` that resolves the
+# same from your browser and from the other containers, so OIDC issuer URLs are
+# consistent. Add this line to your /etc/hosts once:
+#
+#   127.0.0.1   keycloak
+#
+# Then open the apps at http://localhost:3000 (banking UI) and
+# http://localhost:3001 (tenancy portal); log in via http://keycloak:8080.
+
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  keycloak:
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_HOSTNAME: http://keycloak:8080
+      KC_HOSTNAME_STRICT: "false"
+    ports:
+      - "8080:8080"
+    networks:
+      fincore:
+        aliases:
+          - keycloak
+
+  fineract:
+    ports:
+      - "8443:8443"
+
+  fineract-ui:
+    environment:
+      AUTH_URL: http://localhost:3000
+      AUTH_KEYCLOAK_ISSUER: http://keycloak:8080/realms/taalam
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+    ports:
+      - "3000:3000"
+
+  tenancy-service:
+    environment:
+      TENANT_MGMT_SECURITY_ISSUER_URI: http://keycloak:8080/realms/platform
+      TENANT_MGMT_SECURITY_JWK_SET_URI: http://keycloak:8080/realms/platform/protocol/openid-connect/certs
+      TENANT_MGMT_KEYCLOAK_BASE_URL: http://keycloak:8080
+      FINERACT_RUNTIME_REFRESH_TOKEN_URL: http://keycloak:8080/realms/platform/protocol/openid-connect/token
+    ports:
+      - "8081:8080"
+
+  tenancy-portal:
+    environment:
+      AUTH_URL: http://localhost:3001
+      AUTH_KEYCLOAK_ISSUER: http://keycloak:8080/realms/platform
+    ports:
+      - "3001:3000"

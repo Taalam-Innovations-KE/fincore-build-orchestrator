@@ -6,8 +6,9 @@ services:
 
     restart: unless-stopped
 
-    ports:
-      - "8443:8443"
+    # Internal only by default; host port is published in compose.local.yaml.
+    expose:
+      - "8443"
 
     env_file:
       - .env

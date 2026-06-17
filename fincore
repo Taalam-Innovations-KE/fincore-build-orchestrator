@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+#
+# fincore — orchestrate the FinCore platform (local / prod).
+#
+#   ./fincore init  [local|prod]   create missing .env files from templates
+#   ./fincore check [local|prod]   preflight + validate .env values (no startup)
+#   ./fincore up    [local|prod]   check, then bring the stack up
+#   ./fincore down  [local|prod]   stop and remove the stack
+#   ./fincore logs  [service]      follow logs
+#   ./fincore ps    [local|prod]   show service status
+#   ./fincore pull                 pull the latest images
+#
+# Default environment is `local` when omitted.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+NETWORK="fincore"
+SERVICE_DIRS=(. postgres keycloak fineract fineract-ui tenancy-service tenancy-portal traefik)
+
+# --- output helpers ------------------------------------------------------------
+if [ -t 1 ]; then
+  RED=$'\e[31m'; GRN=$'\e[32m'; YLW=$'\e[33m'; BLU=$'\e[34m'; BLD=$'\e[1m'; RST=$'\e[0m'
+else
+  RED=""; GRN=""; YLW=""; BLU=""; BLD=""; RST=""
+fi
+info() { printf '%s %s\n' "${BLU}==>${RST}" "$*"; }
+ok()   { printf '   %s %s\n' "${GRN}ok${RST}"   "$*"; }
+warn() { printf '   %s %s\n' "${YLW}warn${RST}" "$*"; }
+fail() { printf '   %s %s\n' "${RED}error${RST}" "$*"; }
+die()  { printf '%s %s\n' "${RED}fatal:${RST}" "$*" >&2; exit 1; }
+
+# --- env file parsing ----------------------------------------------------------
+getvar() { # file key -> value (last definition wins, quotes stripped)
+  local f="$1" k="$2" v=""
+  [ -f "$f" ] || return 1
+  v="$(grep -E "^${k}=" "$f" | tail -1 | cut -d= -f2- || true)"
+  v="${v%$'\r'}"; v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+  printf '%s' "$v"
+}
+
+is_unset() { # value -> 0 if empty or a CHANGE_ME placeholder
+  local v="$1"
+  [ -z "$v" ] && return 0
+  case "$v" in *CHANGE_ME*) return 0 ;; esac
+  return 1
+}
+
+# Secrets that must be provided. "file|KEY"
+REQUIRED_SECRETS=(
+  "postgres/.env|POSTGRES_PASSWORD"
+  "postgres/.env|KEYCLOAK_DB_PASS"
+  "postgres/.env|FINERACT_DB_PASS"
+  "postgres/.env|TENANT_MGMT_DB_PASS"
+  "keycloak/.env|KC_BOOTSTRAP_ADMIN_PASSWORD"
+  "keycloak/.env|KC_DB_PASSWORD"
+  "fineract-ui/.env|AUTH_SECRET"
+  "fineract-ui/.env|AUTH_KEYCLOAK_SECRET"
+  "tenancy-service/.env|TENANT_MGMT_DB_PASSWORD"
+  "tenancy-service/.env|TENANT_MGMT_KEYCLOAK_ADMIN_PASSWORD"
+  "tenancy-portal/.env|AUTH_SECRET"
+  "tenancy-portal/.env|AUTH_KEYCLOAK_SECRET"
+)
+# Additional requirements enforced only for prod. "file|KEY"
+REQUIRED_PROD=(
+  "traefik/.env|LE_EMAIL"
+)
+
+# --- commands ------------------------------------------------------------------
+cmd_init() {
+  info "Creating missing .env files from templates"
+  local created=0
+  for d in "${SERVICE_DIRS[@]}"; do
+    if [ ! -f "$d/.env" ] && [ -f "$d/.env.example" ]; then
+      cp "$d/.env.example" "$d/.env"; ok "created ${d#./}/.env"; created=1
+    fi
+  done
+  [ "$created" -eq 0 ] && ok "all .env files already present"
+  echo
+  info "Next: review the .env files, then run ${BLD}./fincore check${RST}"
+}
+
+cmd_check() { # env
+  local env="$1" errors=0 warns=0
+
+  info "Preflight"
+  command -v docker >/dev/null 2>&1 || die "docker is not installed"
+  docker compose version >/dev/null 2>&1 || die "docker compose v2 is required"
+  ok "docker + compose available"
+
+  # .env files exist?
+  for d in "${SERVICE_DIRS[@]}"; do
+    [ -f "$d/.env.example" ] || continue
+    if [ ! -f "$d/.env" ]; then
+      fail "${d#./}/.env is missing — run ./fincore init"; errors=$((errors+1))
+    fi
+  done
+
+  info "Validating secrets (${BLD}${env}${RST})"
+  local list=("${REQUIRED_SECRETS[@]}")
+  [ "$env" = "prod" ] && list+=("${REQUIRED_PROD[@]}")
+  for item in "${list[@]}"; do
+    local f="${item%%|*}" k="${item##*|}" v
+    v="$(getvar "$f" "$k" 2>/dev/null || true)"
+    if is_unset "$v"; then
+      if [ "$env" = "prod" ]; then
+        fail "$f: set a real value for ${BLD}${k}${RST}"; errors=$((errors+1))
+      else
+        warn "$f: ${k} is a placeholder (ok for local; required before prod)"; warns=$((warns+1))
+      fi
+    fi
+  done
+
+  # Cross-check: portal client secret must match the realm import.
+  if command -v python3 >/dev/null 2>&1 && [ -f keycloak/import/platform-realm.json ]; then
+    local portal_secret realm_secret
+    portal_secret="$(getvar tenancy-portal/.env AUTH_KEYCLOAK_SECRET 2>/dev/null || true)"
+    realm_secret="$(python3 -c 'import json;d=json.load(open("keycloak/import/platform-realm.json"));print(next((c.get("secret","") for c in d.get("clients",[]) if c.get("clientId")=="tenants-portal"),""))' 2>/dev/null || true)"
+    if [ -n "$portal_secret" ] && [ "$portal_secret" != "$realm_secret" ]; then
+      fail "tenancy-portal AUTH_KEYCLOAK_SECRET != tenants-portal secret in platform-realm.json (login will fail)"
+      errors=$((errors+1))
+    else
+      ok "portal client secret matches realm import"
+    fi
+  fi
+
+  # Local-only: hostname for consistent OIDC issuer.
+  if [ "$env" = "local" ]; then
+    if grep -qiE '^[[:space:]]*[0-9.]+[[:space:]]+(.*[[:space:]])?keycloak([[:space:]]|$)' /etc/hosts 2>/dev/null; then
+      ok "/etc/hosts maps 'keycloak'"
+    else
+      warn "add '127.0.0.1 keycloak' to /etc/hosts so OIDC issuer URLs resolve from host + containers"
+      warns=$((warns+1))
+    fi
+  fi
+
+  echo
+  if [ "$errors" -gt 0 ]; then
+    fail "$errors error(s), $warns warning(s)"; return 1
+  fi
+  ok "checks passed ($warns warning(s))"; return 0
+}
+
+ensure_network() {
+  docker network inspect "$NETWORK" >/dev/null 2>&1 || { info "Creating network '$NETWORK'"; docker network create "$NETWORK" >/dev/null; }
+}
+
+dc() { # env args...
+  local env="$1"; shift
+  case "$env" in
+    local) docker compose -f compose.yaml -f compose.local.yaml "$@" ;;
+    prod)  docker compose -f compose.yaml -f compose.prod.yaml  "$@" ;;
+    *) die "unknown environment '$env'" ;;
+  esac
+}
+
+print_endpoints() { # env
+  echo
+  info "Endpoints"
+  if [ "$1" = "local" ]; then
+    cat <<EOF
+   Keycloak        http://keycloak:8080        (admin / see keycloak/.env)
+   Banking UI      http://localhost:3000
+   Tenancy portal  http://localhost:3001       (platform-admin / ChangeMe123!)
+   Fineract API    https://localhost:8443/fineract-provider/
+   Tenancy API     http://localhost:8081
+   Postgres        localhost:5432
+EOF
+  else
+    cat <<EOF
+   Keycloak        https://auth.patocapital.com
+   Tenancy portal  https://tenants.patocapital.com
+   Banking UI      https://apps.patocapital.com
+   (backends Fineract + tenancy-service are internal only)
+EOF
+  fi
+}
+
+cmd_up() { # env
+  local env="$1"
+  cmd_check "$env" || die "validation failed — fix the errors above (or run ./fincore init)"
+  ensure_network
+  info "Starting stack (${BLD}${env}${RST})"
+  dc "$env" up -d
+  dc "$env" ps
+  print_endpoints "$env"
+}
+
+cmd_down() { ensure_network 2>/dev/null || true; info "Stopping stack (${BLD}$1${RST})"; dc "$1" down; }
+cmd_ps()   { dc "$1" ps; }
+cmd_pull() { docker compose -f compose.yaml pull; }
+cmd_logs() {
+  if [ -n "${1:-}" ]; then docker compose -f compose.yaml -f compose.local.yaml logs -f --tail=100 "$1";
+  else docker compose -f compose.yaml -f compose.local.yaml logs -f --tail=100; fi
+}
+
+# --- dispatch ------------------------------------------------------------------
+usage() { sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'; }
+
+main() {
+  local command="${1:-}"; shift || true
+  case "$command" in
+    init)  cmd_init ;;
+    check) cmd_check "${1:-local}" ;;
+    up)    cmd_up "${1:-local}" ;;
+    down)  cmd_down "${1:-local}" ;;
+    ps)    cmd_ps "${1:-local}" ;;
+    pull)  cmd_pull ;;
+    logs)  cmd_logs "${1:-}" ;;
+    ""|-h|--help|help) usage ;;
+    *) die "unknown command '$command' (try ./fincore help)" ;;
+  esac
+}
+
+main "$@"

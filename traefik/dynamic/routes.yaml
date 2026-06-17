@@ -1,26 +1,41 @@
 http:
   routers:
-    fincore-kc:
-      rule: Host(`auth.fincore.taalaminnovations.co.ke`)
+    # Keycloak (OAuth2 / OIDC provider)
+    fincore-auth:
+      rule: Host(`auth.patocapital.com`)
       entryPoints: [websecure]
       tls:
         certResolver: le
-      service: fincore-kc-svc
+      service: fincore-auth-svc
 
-    fincore-ui:
-      rule: Host(`demo.fincore.taalaminnovations.co.ke`)
+    # Tenancy management portal (control-plane UI)
+    fincore-tenants:
+      rule: Host(`tenants.patocapital.com`)
       entryPoints: [websecure]
       tls:
         certResolver: le
-      service: fincore-ui-svc
+      service: fincore-tenants-svc
+
+    # Banking UI (Fineract front-end)
+    fincore-apps:
+      rule: Host(`apps.patocapital.com`)
+      entryPoints: [websecure]
+      tls:
+        certResolver: le
+      service: fincore-apps-svc
 
   services:
-    fincore-kc-svc:
+    fincore-auth-svc:
       loadBalancer:
         servers:
           - url: "http://fincore-kc:8080"
 
-    fincore-ui-svc:
+    fincore-tenants-svc:
+      loadBalancer:
+        servers:
+          - url: "http://fineract-tenants-portal:3000"
+
+    fincore-apps-svc:
       loadBalancer:
         servers:
           - url: "http://fineract-web:3000"

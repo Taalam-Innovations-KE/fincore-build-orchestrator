@@ -1,0 +1,19 @@
+# Root orchestration for the FinCore platform.
+#
+# This file wires together every service via `include`. It is NOT meant to be
+# run on its own — always combine it with an environment overlay:
+#
+#   Local:  docker compose -f compose.yaml -f compose.local.yaml up -d
+#   Prod:   docker compose -f compose.yaml -f compose.prod.yaml  up -d
+#
+# Or use the Makefile targets: `make up-local` / `make up-prod`.
+#
+# All services attach to the external `fincore` network (created by the Makefile).
+
+include:
+  - postgres/compose.yaml
+  - keycloak/compose.yaml
+  - fineract/compose.yaml
+  - fineract-ui/compose.yaml
+  - tenancy-service/compose.yaml
+  - tenancy-portal/compose.yaml

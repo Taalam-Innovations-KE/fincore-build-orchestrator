@@ -1,0 +1,14 @@
+# Real environment files hold secrets — never commit them.
+# Commit the *.env.example templates instead.
+.env
+*/.env
+!*.env.example
+
+# Traefik ACME cert store
+traefik/letsencrypt/acme.json
+
+# Runtime data / logs
+fineract/logs/
+fineract/data/
+
+.idea/
