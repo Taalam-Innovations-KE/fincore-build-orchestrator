@@ -24,7 +24,7 @@
       "credentials": [
         { "type": "password", "value": "ChangeMe123!", "temporary": false }
       ],
-      "realmRoles": ["platform-admin"]
+      "realmRoles": ["platform-admin", "offline_access"]
     }
   ],
   "clients": [

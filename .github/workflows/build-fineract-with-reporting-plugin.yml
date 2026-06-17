@@ -241,6 +241,16 @@ jobs:
             -Djib.to.image=${{ steps.tags.outputs.base_image }} \
             -x test -x cucumber
 
+      - name: Validate Taalam custom modules in base image
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh ${{ steps.tags.outputs.base_image }} -c '
+            set -e
+            ls -1 /app/libs/taalam-fineract-tenant-runtime-*.jar >/dev/null
+            ls -1 /app/libs/taalam-fineract-keycloak-resource-server-*.jar >/dev/null
+            grep -F "/app/plugins/*" /app/jib-classpath-file >/dev/null
+          '
+
       - name: Build reporting plugin and dependencies
         if: steps.params.outputs.plugin_source == 'build-from-source'
         working-directory: plugin-src
@@ -451,6 +461,9 @@ jobs:
             -e REPORTS_DS_PASSWORD="${{ inputs.reports_datasource_password }}" \
             --entrypoint sh ${{ steps.tags.outputs.local_image }} -c '
             set -e
+            ls -1 /app/libs/taalam-fineract-tenant-runtime-*.jar >/dev/null
+            ls -1 /app/libs/taalam-fineract-keycloak-resource-server-*.jar >/dev/null
+            grep -F "/app/plugins/*" /app/jib-classpath-file >/dev/null
             ls -1 /app/plugins/*.jar >/dev/null
             if ls -1 /app/plugins/fineract-*.jar >/dev/null 2>&1 \
               || ls -1 /app/plugins/commons-lang3-*.jar >/dev/null 2>&1 \
