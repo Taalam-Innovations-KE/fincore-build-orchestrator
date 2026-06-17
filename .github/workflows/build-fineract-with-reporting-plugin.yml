@@ -234,7 +234,10 @@ jobs:
         working-directory: fineract-src
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon --console=plain :fineract-provider:jibDockerBuild \
+          # :custom:docker (not :fineract-provider) so the Taalam custom modules
+          # (tenant-runtime endpoint, Keycloak tenant-realm provisioning) are packaged
+          # into the image. :fineract-provider:jibDockerBuild only adds them to bootRun.
+          ./gradlew --no-daemon --console=plain :custom:docker:jibDockerBuild \
             -Djib.to.image=${{ steps.tags.outputs.base_image }} \
             -x test -x cucumber
 

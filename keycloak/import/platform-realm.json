@@ -1,0 +1,97 @@
+{
+  "realm": "platform",
+  "enabled": true,
+  "displayName": "FinCore Platform",
+  "loginTheme": "PatoImara",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "platform-admin",
+        "description": "Control-plane administrator (tenancy portal)"
+      }
+    ]
+  },
+  "users": [
+    {
+      "username": "platform-admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "platform-admin@patocapital.com",
+      "firstName": "Platform",
+      "lastName": "Admin",
+      "credentials": [
+        { "type": "password", "value": "ChangeMe123!", "temporary": false }
+      ],
+      "realmRoles": ["platform-admin"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "tenants-portal",
+      "name": "Tenancy Management Portal",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "CHANGE_ME_PORTAL_CLIENT_SECRET",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://tenants.patocapital.com/*",
+        "http://localhost:3001/*"
+      ],
+      "webOrigins": [
+        "https://tenants.patocapital.com",
+        "http://localhost:3001"
+      ],
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["web-origins", "profile", "roles", "email"],
+      "optionalClientScopes": ["offline_access"],
+      "protocolMappers": [
+        {
+          "name": "tenancy-service-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "fineract-tenant-management",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "fineract-tenant-management",
+      "name": "Tenancy Management Service (resource server)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "bearerOnly": true
+    },
+    {
+      "clientId": "fineract-runtime",
+      "name": "Fineract Tenant Runtime (service account)",
+      "description": "Used by tenancy-service (client-credentials) to call Fineract's tenant-runtime register-and-refresh endpoint.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "CHANGE_ME_RUNTIME_CLIENT_SECRET",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "fineract-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "fineract",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

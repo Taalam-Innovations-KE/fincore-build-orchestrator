@@ -1,0 +1,18 @@
+services:
+  tenancy-portal:
+    image: ${TENANT_PORTAL_IMAGE:-taalamke/taalam-tenants-portal:latest}
+    container_name: fineract-tenants-portal
+    restart: unless-stopped
+
+    expose:
+      - "3000"
+
+    env_file:
+      - .env
+
+    networks:
+      - fincore
+
+networks:
+  fincore:
+    external: true

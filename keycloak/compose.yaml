@@ -1,10 +1,11 @@
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:latest
+    image: ${KEYCLOAK_IMAGE:-taalam/fineract-keycloak-sso:latest}
     container_name: fincore-kc
     restart: unless-stopped
 
-    command: ["start"]
+    # The startup command (start / start-dev, --import-realm) is set per
+    # environment in compose.prod.yaml / compose.local.yaml.
 
     env_file:
       - ./.env
@@ -14,7 +15,9 @@ services:
 
     volumes:
       - keycloak_data:/opt/keycloak/data
-  
+      # Realm bootstrap (imported on first boot with --import-realm)
+      - ./import:/opt/keycloak/data/import:ro
+
     networks:
       - fincore
 

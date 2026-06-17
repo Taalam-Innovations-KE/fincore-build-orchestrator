@@ -1,0 +1,26 @@
+services:
+  tenancy-service:
+    image: ${TENANT_MGMT_IMAGE:-taalamke/taalam-tenant-management-service:latest}
+    container_name: fineract-tenant-management-service
+    restart: unless-stopped
+
+    expose:
+      - "8080"
+
+    env_file:
+      - .env
+
+    networks:
+      - fincore
+
+    # eclipse-temurin (Ubuntu) has bash but no nc/curl; use bash's /dev/tcp.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+networks:
+  fincore:
+    external: true

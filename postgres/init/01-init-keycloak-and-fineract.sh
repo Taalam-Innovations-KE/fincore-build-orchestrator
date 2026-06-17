@@ -14,6 +14,9 @@ psql -v ON_ERROR_STOP=1 \
   -v fa_pass="${FINERACT_DB_PASS}" \
   -v fa_tenants_db="${FINERACT_TENANTS_DB_NAME}" \
   -v fa_default_db="${FINERACT_TENANT_DEFAULT_DB_NAME}" \
+  -v tm_user="${TENANT_MGMT_DB_USER}" \
+  -v tm_pass="${TENANT_MGMT_DB_PASS}" \
+  -v tm_db="${TENANT_MGMT_DB_NAME}" \
 <<'EOSQL'
 
 -- =========================
@@ -50,6 +53,20 @@ SELECT format('GRANT ALL PRIVILEGES ON DATABASE %I TO %I', :'fa_tenants_db', :'f
 SELECT format('GRANT ALL PRIVILEGES ON DATABASE %I TO %I', :'fa_default_db', :'fa_user')
 \gexec
 
+-- =========================================
+-- Tenancy Management Service: role + database
+-- =========================================
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'tm_user', :'tm_pass')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'tm_user')
+\gexec
+
+SELECT format('CREATE DATABASE %I OWNER %I', :'tm_db', :'tm_user')
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'tm_db')
+\gexec
+
+SELECT format('GRANT ALL PRIVILEGES ON DATABASE %I TO %I', :'tm_db', :'tm_user')
+\gexec
+
 EOSQL
 
 # Schema grants must be done after connecting to each DB
@@ -69,4 +86,10 @@ psql -v ON_ERROR_STOP=1 --username "${POSTGRES_USER}" --dbname "${FINERACT_TENAN
   GRANT ALL ON SCHEMA public TO "${FINERACT_DB_USER}";
   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES    TO "${FINERACT_DB_USER}";
   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "${FINERACT_DB_USER}";
+EOSQL
+
+psql -v ON_ERROR_STOP=1 --username "${POSTGRES_USER}" --dbname "${TENANT_MGMT_DB_NAME}" <<EOSQL
+  GRANT ALL ON SCHEMA public TO "${TENANT_MGMT_DB_USER}";
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES    TO "${TENANT_MGMT_DB_USER}";
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "${TENANT_MGMT_DB_USER}";
 EOSQL

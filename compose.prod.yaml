@@ -1,0 +1,22 @@
+# Production overlay: adds Traefik (TLS + host routing). Backends stay internal.
+#
+#   docker compose -f compose.yaml -f compose.prod.yaml up -d   (or: make up-prod)
+#
+# Public hosts (configure DNS A records -> this server):
+#   auth.patocapital.com    -> Keycloak
+#   tenants.patocapital.com -> tenancy-portal
+#   apps.patocapital.com    -> fineract-ui
+#
+# Fineract API and the tenancy-management-service are NOT published; the Next.js
+# apps proxy to them over the internal `fincore` network.
+
+include:
+  - traefik/compose.yaml
+
+services:
+  keycloak:
+    command: ["start", "--optimized", "--import-realm"]
+    environment:
+      KC_HOSTNAME: https://auth.patocapital.com
+      KC_HOSTNAME_STRICT: "true"
+      KC_PROXY_HEADERS: xforwarded
